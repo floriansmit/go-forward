@@ -4,7 +4,7 @@ import argparse
 from collections import defaultdict
 from pathlib import Path
 
-from grdecl_utils import grdecl_keyword, tokenize_grdecl, write_property
+from grdecl_utils import grdecl_keyword, path_for_io, tokenize_grdecl, write_property
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,13 +64,13 @@ def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, 
 def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path) -> None:
     grdecls = sorted(path for path in grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
     property_columns, attrs_by_realization = read_union_tmap_pointsets(pointset_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
 
     for realization_index, grdecl_path in enumerate(grdecls, start=1):
         n_cells = cell_count(grdecl_path)
         attrs_by_cell = attrs_by_realization.get(realization_index, {})
         output_path = output_dir / f"{grdecl_path.with_suffix('').name}_with_union_tmap_properties.grdecl"
-        with grdecl_path.open("r", encoding="utf-8") as source, output_path.open("w", encoding="utf-8", newline="\n") as out:
+        with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
             out.write(source.read().rstrip() + "\n")
             out.write("\n-- T>Map-style properties mapped from union facies point sets.\n")
             out.write(f"-- Source point-set folder: {pointset_dir}\n")

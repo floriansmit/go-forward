@@ -5,7 +5,7 @@ import bisect
 from collections import defaultdict
 from pathlib import Path
 
-from grdecl_utils import grdecl_cell_centers, grdecl_keyword, tokenize_grdecl, write_property
+from grdecl_utils import grdecl_cell_centers, grdecl_keyword, path_for_io, tokenize_grdecl, write_property
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,14 +100,14 @@ def main() -> None:
     args = parser.parse_args()
 
     properties, table = read_control_pointsets(args.pointset_dir)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    Path(path_for_io(args.output_dir)).mkdir(parents=True, exist_ok=True)
     grdecls = sorted(path for path in args.grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
     for realization_index, grdecl in enumerate(grdecls, start=1):
         centers = grdecl_cell_centers(grdecl)
         facies_values = expanded_facies(grdecl, args.property)
         output_path = args.output_dir / f"{grdecl.with_suffix('').name}_with_control_interpolated_tmap_properties.grdecl"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with grdecl.open("r", encoding="utf-8") as source, output_path.open("w", encoding="utf-8", newline="\n") as out:
+        Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
+        with grdecl.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
             out.write(source.read().rstrip() + "\n")
             out.write("\n-- T>Map properties interpolated from reduced facies control point sets.\n")
             out.write(f"-- Source point-set folder: {args.pointset_dir}\n")

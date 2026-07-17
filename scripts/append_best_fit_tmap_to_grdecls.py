@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -28,6 +29,16 @@ GRDECL_KEYWORD_ALIASES = {
     "permeability_p75": "PERM75",
     "permeability_p90": "PERM90",
 }
+
+
+def path_for_io(path: Path) -> str:
+    """Return a Windows extended-length path when required for file I/O."""
+    text = str(path.resolve())
+    if os.name != "nt" or text.startswith("\\\\?\\"):
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
 
 
 def tokenize_grdecl(path: Path, wanted: set[str]) -> dict[str, list[str]]:
@@ -208,8 +219,8 @@ def append_properties(grdecl_path: Path, pointset_path: Path, output_path: Path)
     attrs_by_cell, max_distance = assign_points_to_cells(centers, point_rows)
     matched = sum(attrs is not None for attrs in attrs_by_cell)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with grdecl_path.open("r", encoding="utf-8") as source, output_path.open("w", encoding="utf-8", newline="\n") as out:
+    Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
+    with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
         out.write(source.read().rstrip() + "\n")
         out.write("\n-- Synthetic T>Map-style properties mapped from Petrel 3D point set.\n")
         out.write(f"-- Source point set: {pointset_path.name}\n")

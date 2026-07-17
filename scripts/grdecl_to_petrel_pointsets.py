@@ -4,7 +4,7 @@ import argparse
 import shutil
 from pathlib import Path
 
-from grdecl_utils import grdecl_cell_centers, tokenize_grdecl
+from grdecl_utils import grdecl_cell_centers, path_for_io, tokenize_grdecl
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,8 +42,8 @@ def write_pointset(
 
     written = 0
     skipped = 0
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8", newline="\n") as out:
+    Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
+    with open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
         out.write("# Petrel Points with attributes\n")
         out.write("# Unit in X and Y direction: m\n")
         out.write("# Unit in depth: m\n")

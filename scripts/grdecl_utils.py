@@ -10,6 +10,7 @@ from append_best_fit_tmap_to_grdecls import (
     grdecl_cell_centers,
     grdecl_keyword,
     mapaxes_transform,
+    path_for_io,
     tokenize_grdecl,
     write_property,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "grdecl_cell_centers",
     "grdecl_keyword",
     "mapaxes_transform",
+    "path_for_io",
     "tokenize_grdecl",
     "write_property",
 ]

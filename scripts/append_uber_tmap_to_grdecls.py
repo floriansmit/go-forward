@@ -5,7 +5,7 @@ import bisect
 from collections import defaultdict
 from pathlib import Path
 
-from grdecl_utils import grdecl_cell_centers, grdecl_keyword, tokenize_grdecl, write_property
+from grdecl_utils import grdecl_cell_centers, grdecl_keyword, path_for_io, tokenize_grdecl, write_property
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,7 +90,7 @@ def interpolate(values: list[tuple[float, list[str]]], z: float, attr_index: int
 
 def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, no_extrapolate: bool, facies_property: str) -> None:
     property_columns, table = read_uber_tmap_pointsets(pointset_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
 
     grdecls = sorted(path for path in grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
     for grdecl_path in grdecls:
@@ -104,8 +104,8 @@ def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, no
             per_cell_series.append((z, table.get(facies, {}).get((f"{x:.2f}", f"{y:.2f}"))))
 
         output_path = output_dir / f"{grdecl_path.with_suffix('').name}_with_uber_tmap_properties.grdecl"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with grdecl_path.open("r", encoding="utf-8") as source, output_path.open("w", encoding="utf-8", newline="\n") as out:
+        Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
+        with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
             out.write(source.read().rstrip() + "\n")
             out.write("\n-- T>Map-style properties interpolated from Uber facies point sets.\n")
             out.write(f"-- Source point-set folder: {pointset_dir}\n")

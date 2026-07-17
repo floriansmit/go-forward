@@ -11,7 +11,7 @@ from append_uber_tmap_to_grdecls import (
     interpolate,
     read_uber_tmap_pointsets,
 )
-from grdecl_utils import grdecl_cell_centers
+from grdecl_utils import grdecl_cell_centers, path_for_io
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,7 +94,7 @@ def write_petrel_standard_grdecls(grdecl_dir: Path, pointset_dir: Path, output_d
     if missing_columns:
         raise ValueError(f"Uber T>Map point sets are missing required column(s): {', '.join(missing_columns)}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
     for grdecl_path in sorted(grdecl_dir.glob("*.grdecl")):
         centers = grdecl_cell_centers(grdecl_path)
         facies_values = expanded_facies_values(grdecl_path)
@@ -107,7 +107,7 @@ def write_petrel_standard_grdecls(grdecl_dir: Path, pointset_dir: Path, output_d
         permeability_mean_values = values_by_column[PERMEABILITY_MEAN_COLUMN]
 
         output_path = output_dir / f"{grdecl_path.with_suffix('').name}_with_uber_petrel_standard_properties.grdecl"
-        with grdecl_path.open("r", encoding="utf-8") as source, output_path.open("w", encoding="utf-8", newline="\n") as out:
+        with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
             out.write(without_keyword_block(source.read(), "Facies") + "\n")
             out.write("\n-- Petrel/Eclipse-standard properties interpolated from Uber facies point sets.\n")
             out.write("-- FACIES is copied from the original DionisosFlow/Petrel Facies keyword.\n")

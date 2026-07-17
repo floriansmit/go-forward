@@ -1,0 +1,24 @@
+{
+  "facies_colors": {
+    "1": "#4e79a7",
+    "2": "#2bd1f2",
+    "3": "#e9e5b6",
+    "4": "#e3f708",
+    "5": "#b1f6d5",
+    "6": "#10a147",
+    "8": "#fa0c11",
+    "9": "#dc8927",
+    "10": "#9c755f"
+  },
+  "facies_names": {
+    "1": "FA1a Offshore",
+    "2": "FA1b Offshore transition",
+    "3": "FA2a Lower shoreface",
+    "4": "FA2b Middle and upper shoreface",
+    "5": "FA3a Lagoon",
+    "6": "FA3b Tidal flats and channels",
+    "8": "FA4a Fluvial",
+    "9": "FA4b Fluvial, tidal influenced",
+    "10": "FA5 Floodplain lacustrine"
+  }
+}

@@ -1,0 +1,10 @@
+# Python virtual environments and caches
+dashboard/.venv/
+__pycache__/
+*.py[cod]
+
+# Local Streamlit secrets
+.streamlit/secrets.toml
+
+# Local output folders
+outputs/

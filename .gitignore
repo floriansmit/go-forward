@@ -8,3 +8,6 @@ __pycache__/
 
 # Local output folders
 outputs/
+
+# Claude MD 
+CLAUDE.md

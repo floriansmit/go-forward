@@ -9,40 +9,51 @@ Choose **one** approach below. The approaches are alternatives, not consecutive 
 3. Use an empty or dedicated set of approach output folders for every new source-data set. Do not mix returned T>Map files from different source sets.
 4. Set the exact facies property keyword below. It is case-sensitive (`Facies` and `FACIES` are different keywords).
 
-Open PowerShell in this workspace and set the variables once:
+The whole synthetic round trip can be run in one command with the cross-platform launcher — see [Recreate the example outputs](#recreate-the-example-outputs-in-one-command) below. The per-stage commands in this guide are written for **Windows PowerShell**. To run them on **Linux/macOS**, translate each block: drop `& $Python`, use `python`, and use forward slashes (`.\scripts\x.py` → `scripts/x.py`); the `$SourceDir`-style variables work the same in bash.
+
+Set the shared values once. PowerShell:
 
 ```powershell
-$Python = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-if (-not (Test-Path $Python)) { $Python = "python" }
-
+$Python = "python"
 $SourceDir = "C:\path\to\your\source-grdecls"
 $FaciesProperty = "Facies"       # Change to FACIES, FaciesCode, etc. when needed.
 $FaciesConfig = ".\dashboard\facies_config.json"
+```
+
+Linux/macOS (bash):
+
+```bash
+Python=python
+SourceDir=/path/to/your/source-grdecls
+FaciesProperty=Facies            # Change to FACIES, FaciesCode, etc. when needed.
+FaciesConfig=./dashboard/facies_config.json
 ```
 
 The point-set builders create folders when needed. Before starting a fresh source-data set, clear or replace the relevant `outputs\<approach>` folder so old facies point sets cannot be sent to T>Map again.
 
 ## Recreate the example outputs in one command
 
-The repository includes `regenerate_synthetic_outputs.ps1` to recreate all current example outputs from the source GRDECLs. It runs the local **synthetic** T>Map generator, so it is suitable for a clean checkout, demonstration, and testing—not as a replacement for an actual T>Map calculation.
+The cross-platform launcher `workflow.py` recreates all current example outputs from the source GRDECLs. It runs the local **synthetic** T>Map generator, so it is suitable for a clean checkout, demonstration, and testing—not as a replacement for an actual T>Map calculation.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1
+```bash
+python workflow.py regenerate
 ```
 
 To rebuild just one workflow, for example Control:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 -Approach Control
+```bash
+python workflow.py regenerate --approach Control
 ```
 
 For a new GRDECL set or a different facies keyword:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 `
-  -SourceDir "C:\path\to\source-grdecls" `
-  -FaciesProperty "FACIES"
+```bash
+python workflow.py regenerate \
+  --source-dir /path/to/source-grdecls \
+  --facies-property FACIES
 ```
+
+On Windows, the `regenerate_synthetic_outputs.ps1` wrapper takes the same options with PowerShell names (`-Approach`, `-SourceDir`, `-FaciesProperty`).
 
 ## Facies codes and labels
 

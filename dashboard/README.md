@@ -4,14 +4,14 @@ Streamlit MVP for inspecting the DionisosFlow GRDECL to T>Map point-set workflow
 
 ## Install
 
-```powershell
+```bash
 python -m pip install -r requirements-dashboard.txt
 ```
 
 ## Run
 
-```powershell
-streamlit run dashboard\streamlit_app.py
+```bash
+python workflow.py dashboard        # or: streamlit run dashboard/streamlit_app.py
 ```
 
 The dashboard has three tabs:

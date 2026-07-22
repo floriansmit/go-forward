@@ -124,7 +124,7 @@ The dashboard will:
 ### Facies not showing in discrete colors?
 - Check that the column name is exactly "Facies", "FACIES", or "FACIESID"
 - Ensure all values are integers (no NaN or float values)
-- Restart the dashboard: `Ctrl+C` and `.\run_dashboard.ps1`
+- Restart the dashboard: `Ctrl+C`, then `python workflow.py dashboard` (`.\run_dashboard.ps1` on Windows)
 
 ### Can't find color picker?
 - Make sure you selected a facies property from the "Property" dropdown

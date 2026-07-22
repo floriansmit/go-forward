@@ -34,8 +34,9 @@ The approaches are alternatives; they are not stages that must be run one after 
 │                                      Source GRDECL realizations
 ├── scripts/                           Reusable command-line workflow scripts
 ├── outputs/                           Generated point sets and augmented GRDECLs (not versioned)
-├── regenerate_synthetic_outputs.ps1   Rebuild all demonstration outputs locally
-├── run_dashboard.ps1                  Start the dashboard
+├── workflow.py                        Cross-platform launcher (dashboard, regenerate)
+├── regenerate_synthetic_outputs.ps1   Windows wrapper: rebuild all demonstration outputs
+├── run_dashboard.ps1                  Windows wrapper: start the dashboard
 ├── WORKFLOW.md                        Full command-by-command workflow guide
 └── requirements-dashboard.txt         Dashboard Python dependencies
 ```
@@ -44,49 +45,58 @@ The approaches are alternatives; they are not stages that must be run one after 
 
 ## Requirements
 
-- Windows PowerShell
-- Python with `streamlit`, `pandas`, `numpy`, and `plotly` installed
+- Python 3 on Linux, macOS, or Windows — the `python workflow.py` launcher is cross-platform; the `*.ps1` launchers are Windows-only convenience wrappers
+- Python packages `streamlit`, `pandas`, `numpy`, and `plotly`
 - Source GRDECL models with `SPECGRID`, `COORD`, `ZCORN`, and an integer facies property
 
 Install the dashboard dependencies if needed:
 
-```powershell
-python -m pip install -r .\requirements-dashboard.txt
+```bash
+python -m pip install -r requirements-dashboard.txt
 ```
 
 ## Quick start
 
 ### 1. Start the dashboard
 
+```bash
+python workflow.py dashboard
+```
+
+On Windows you can instead run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run_dashboard.ps1
+`powershell -ExecutionPolicy Bypass -File .\run_dashboard.ps1`
 ```
 
 Open the local URL printed by Streamlit (normally `http://localhost:8501`).
 
 ### 2. Recreate all example outputs
 
-The supplied launcher rebuilds the Best-fit, Union, Control, and Uber example outputs using synthetic T>Map-style properties:
+The launcher rebuilds the Best-fit, Union, Control, and Uber example outputs using synthetic T>Map-style properties:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1
+```bash
+python workflow.py regenerate
 ```
 
 To run only one workflow:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 -Approach Control
+```bash
+python workflow.py regenerate --approach Control
 ```
+
+On Windows the equivalent is `powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 [-Approach Control]`.
 
 ### 3. Run a new GRDECL data set
 
 Point the launcher to a new folder and provide the exact facies property keyword. The keyword is case-sensitive.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 `
-  -SourceDir "C:\path\to\source-grdecls" `
-  -FaciesProperty "FACIES"
+```bash
+python workflow.py regenerate \
+  --source-dir /path/to/source-grdecls \
+  --facies-property FACIES
 ```
+
+On Windows: `.\regenerate_synthetic_outputs.ps1 -SourceDir "C:\path\to\source-grdecls" -FaciesProperty "FACIES"`.
 
 For an actual T>Map project, use the individual build and append commands in [WORKFLOW.md](WORKFLOW.md): send the `01_*` point sets to T>Map, put the returned files in the matching `02_*_with_tmap_data` folder, then run that approach's append script. Do not run the synthetic generator over real returned T>Map files.
 
@@ -107,7 +117,7 @@ Unknown codes remain valid and are written with the label `facies_<code>`.
 
 Generated outputs and virtual environments are excluded through `.gitignore`. This keeps the repository practical to clone and avoids GitHub's large-file restrictions.
 
-To reproduce generated outputs, retain the source GRDECLs and run `regenerate_synthetic_outputs.ps1`. If source data are confidential or too large for GitHub, store them in the appropriate GEUS/OneDrive location and document their access path separately.
+To reproduce generated outputs, retain the source GRDECLs and run `python workflow.py regenerate` (or `regenerate_synthetic_outputs.ps1` on Windows). If source data are confidential or too large for GitHub, store them in the appropriate GEUS/OneDrive location and document their access path separately.
 
 ## More detail
 

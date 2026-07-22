@@ -46,14 +46,17 @@ The approaches are alternatives; they are not stages that must be run one after 
 ## Requirements
 
 - Python 3 on Linux, macOS, or Windows — the `python workflow.py` launcher is cross-platform; the `*.ps1` launchers are Windows-only convenience wrappers
-- Python packages `streamlit`, `pandas`, `numpy`, and `plotly`
 - Source GRDECL models with `SPECGRID`, `COORD`, `ZCORN`, and an integer facies property
 
-Install the dashboard dependencies if needed:
+The pipeline itself (`python workflow.py regenerate` and everything under `scripts/`) uses only the Python standard library — no install needed. Only the **dashboard** requires third-party packages (`streamlit`, `pandas`, `numpy`, `plotly`). Install them into a virtual environment:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate                  # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dashboard.txt
 ```
+
+Because `workflow.py` runs everything through the active interpreter, `python workflow.py dashboard` uses this environment once it is activated. Leave it with `deactivate`.
 
 ## Quick start
 

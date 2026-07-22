@@ -1,4 +1,5 @@
 # Python virtual environments and caches
+.venv/
 dashboard/.venv/
 __pycache__/
 *.py[cod]

@@ -17,7 +17,7 @@ if (-not (Test-Path $Python)) { $Python = "python" }
 
 $SourceDir = "C:\path\to\your\source-grdecls"
 $FaciesProperty = "Facies"       # Change to FACIES, FaciesCode, etc. when needed.
-$FaciesConfig = ".\dashboard\facies_config.json"
+$FaciesConfig = "$SourceDir\facies_config.json"
 ```
 
 The point-set builders create folders when needed. Before starting a fresh source-data set, clear or replace the relevant `outputs\<approach>` folder so old facies point sets cannot be sent to T>Map again.
@@ -48,16 +48,33 @@ powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 `
 
 The scripts do **not** require a predefined list of codes: every integer value found in `$FaciesProperty` is processed automatically. Code `0` is omitted by default from Union, Control, and Uber; add `--include-zero-facies` to include it.
 
-Define display/output labels and dashboard colours in `dashboard\facies_config.json`:
+For every new DionisosFlow model, first scan its source GRDECLs and create a configuration beside them. The command prompts for the geological meaning, colour, reservoir/non-reservoir category, and T>Map hand-off status of every integer code it finds:
+
+```powershell
+& $Python .\scripts\initialize_facies_config.py `
+  --grdecl-dir $SourceDir `
+  --property $FaciesProperty
+```
+
+The resulting `$SourceDir\facies_config.json` is the record for that source set. Pass it as `--facies-config $FaciesConfig` to the Union, Control, and Uber build commands. If a new model deliberately reuses codes with different geological meanings, give it a separate source folder/configuration, or rerun with `--redefine --replace` to re-enter all observed definitions.
+
+The configuration stores display/output labels, dashboard colours, and workflow metadata:
 
 ```json
 {
+  "facies_property": "Facies",
   "facies_colors": { "101": "#4e79a7", "205": "#f28e2b" },
-  "facies_names": { "101": "Offshore", "205": "Channel sand" }
+  "facies_names": { "101": "Offshore", "205": "Channel sand" },
+  "facies_metadata": {
+    "101": { "category": "non_reservoir", "tmap_enabled": false },
+    "205": { "category": "reservoir", "tmap_enabled": true }
+  }
 }
 ```
 
-The Union, Control, and Uber builders use `facies_names` in output names. Pass another file with `--facies-config <path>` if the project needs its own label file. Unknown codes remain valid and are named `facies_<code>`.
+The Union, Control, and Uber builders use `facies_names` in output names. Unknown codes remain valid and are named `facies_<code>`, but creating the config first prevents ambiguous labels from entering the workflow.
+
+To display the same labels and colours in the dashboard, use **Load facies color JSON** and select this project `facies_config.json`; the dashboard imports names, colours, and metadata together.
 
 ## T>Map hand-off rule
 
@@ -68,7 +85,7 @@ Every approach has the same hand-off:
 3. Put the returned point sets in its matching `02_*_with_tmap_data` folder, retaining the input filename and the ID columns (`CellIndex`, and where present `Realization`).
 4. Run the **append** command. It writes GRDECL outputs to `03_*` (and Uber optionally writes a Petrel-standard `04_*` folder).
 
-`generate_tmap_pointsets.py` is only an MVP/test generator. Use it when synthetic output is wanted; do **not** run it over real returned T>Map files.
+`generate_synthetic_tmap_data.py` is only an MVP/test generator. Use it when synthetic output is wanted; do **not** run it over real returned T>Map files.
 
 Use the lean property profile unless a larger exchange is specifically needed:
 
@@ -83,21 +100,21 @@ Use when each realization should be calculated and mapped back independently.
 ### Build point sets
 
 ```powershell
-& $Python .\scripts\grdecl_to_petrel_pointsets.py `
+& $Python .\scripts\build_best_fit_grdecl_to_pointset.py `
   --grdecl-dir $SourceDir `
   --output-dir ".\outputs\Best-fit approach\01_3d_points_from_original_grdecls" `
   --property $FaciesProperty
 ```
 
-Each source model produces a point set with the same base filename plus `_ReservoirGrid`.
+Each source model produces a 3D point set with the same base filename plus `_3d_pointset`.
 
 ### Optional synthetic T>Map result
 
 ```powershell
-& $Python .\scripts\generate_tmap_pointsets.py `
+& $Python .\scripts\generate_synthetic_tmap_data.py `
   --source-dir ".\outputs\Best-fit approach\01_3d_points_from_original_grdecls" `
   --output-dir ".\outputs\Best-fit approach\02_3d_points_with_tmap_data" `
-  --glob "*_ReservoirGrid" `
+  --glob "*_3d_pointset" `
   --property-profile $Profile
 ```
 
@@ -117,7 +134,7 @@ Use when T>Map can process every actual facies cell across the realization set. 
 ### Build facies unions
 
 ```powershell
-& $Python .\scripts\build_union_pointsets_by_facies.py `
+& $Python .\scripts\build_multi_realizations_grdecls_to_union_pointsets.py `
   --grdecl-dir $SourceDir `
   --output-dir ".\outputs\Multi-realization union approach\01_union_pointsets_by_facies" `
   --property $FaciesProperty `
@@ -127,7 +144,7 @@ Use when T>Map can process every actual facies cell across the realization set. 
 ### Optional synthetic T>Map result
 
 ```powershell
-& $Python .\scripts\generate_tmap_pointsets.py `
+& $Python .\scripts\generate_synthetic_tmap_data.py `
   --source-dir ".\outputs\Multi-realization union approach\01_union_pointsets_by_facies" `
   --output-dir ".\outputs\Multi-realization union approach\02_union_pointsets_with_tmap_data" `
   --glob "union_facies_*" `
@@ -137,20 +154,24 @@ Use when T>Map can process every actual facies cell across the realization set. 
 ### Append returned properties
 
 ```powershell
-& $Python .\scripts\append_union_tmap_to_grdecls.py `
+& $Python .\scripts\append_multi_realizations_union_tmap_to_grdecls.py `
   --grdecl-dir $SourceDir `
   --pointset-dir ".\outputs\Multi-realization union approach\02_union_pointsets_with_tmap_data" `
   --output-dir ".\outputs\Multi-realization union approach\03_augmented_grdecls_from_union_lookup"
 ```
 
-## 3. Multi-realization Control: reduced actual-cell sample
+## 3. Multi-realization Control: shared facies-envelope controls
 
-Use to reduce the T>Map workload. For each realization, XY column, and facies, the builder retains the top/bottom cells plus intermediate controls at the requested maximum vertical spacing. Append-back interpolates vertically within the same realization, XY column, and facies.
+Use to reduce the T>Map workload while retaining the uncertainty envelope across a realization set. For each facies and shared XY (I/J) column, the builder inspects all selected realizations, finds the shallowest and deepest occurrence of that facies, then creates regular controls between them at the requested maximum vertical spacing. It writes one shared pointset per facies, rather than repeating a separate control series for every realization. Append-back uses the returned shared facies/XY series to interpolate vertically into every realization.
+
+When run from the dashboard, only facies whose **T>Map** switch is enabled in the source `facies_config.json` are included. The same selection rule now applies to Union, Control, and Uber. Use `--tmap-enabled-only` on the command line for the same behaviour.
+
+For example, if a facies occurs from -1450 to -1650 m in most models but from -1400 to -1700 m in one model, a 100 m interval produces shared controls at -1400, -1500, -1600, and -1700 m for that XY column. `ControlColumn` in the pointset is a stable I/J-column identifier for traceability; it is not a GRDECL 3D `CellIndex`.
 
 ### Build control points
 
 ```powershell
-& $Python .\scripts\build_control_pointsets_by_facies.py `
+& $Python .\scripts\build_multi_realizations_grdecls_to_control_pointsets.py `
   --grdecl-dir $SourceDir `
   --output-dir ".\outputs\Multi-realization control approach\01_control_pointsets_by_facies" `
   --property $FaciesProperty `
@@ -161,7 +182,7 @@ Use to reduce the T>Map workload. For each realization, XY column, and facies, t
 ### Optional synthetic T>Map result
 
 ```powershell
-& $Python .\scripts\generate_tmap_pointsets.py `
+& $Python .\scripts\generate_synthetic_tmap_data.py `
   --source-dir ".\outputs\Multi-realization control approach\01_control_pointsets_by_facies" `
   --output-dir ".\outputs\Multi-realization control approach\02_control_pointsets_with_tmap_data" `
   --glob "control_facies_*" `
@@ -171,7 +192,7 @@ Use to reduce the T>Map workload. For each realization, XY column, and facies, t
 ### Append returned properties by vertical interpolation
 
 ```powershell
-& $Python .\scripts\append_control_tmap_to_grdecls.py `
+& $Python .\scripts\append_multi_realizations_control_tmap_to_grdecls.py `
   --grdecl-dir $SourceDir `
   --pointset-dir ".\outputs\Multi-realization control approach\02_control_pointsets_with_tmap_data" `
   --output-dir ".\outputs\Multi-realization control approach\03_augmented_grdecls_from_control_interpolation" `
@@ -185,7 +206,7 @@ Use to create one facies-specific regular XY/Z lookup library that can be reused
 ### Build Uber lookup point sets
 
 ```powershell
-& $Python .\scripts\build_uber_pointsets_by_facies.py `
+& $Python .\scripts\build_multi_realizations_grdecls_to_uber_pointsets.py `
   --grdecl-dir $SourceDir `
   --output-dir ".\outputs\Multi-realization Uber approach\01_uber_pointsets_by_facies" `
   --property $FaciesProperty `
@@ -198,7 +219,7 @@ Use `--vertical-spacing auto` to choose from the default `10,25,50 m` candidates
 ### Optional synthetic T>Map result
 
 ```powershell
-& $Python .\scripts\generate_tmap_pointsets.py `
+& $Python .\scripts\generate_synthetic_tmap_data.py `
   --source-dir ".\outputs\Multi-realization Uber approach\01_uber_pointsets_by_facies" `
   --output-dir ".\outputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
   --glob "uber_facies_*" `
@@ -208,7 +229,7 @@ Use `--vertical-spacing auto` to choose from the default `10,25,50 m` candidates
 ### Append returned lookup properties
 
 ```powershell
-& $Python .\scripts\append_uber_tmap_to_grdecls.py `
+& $Python .\scripts\append_multi_realizations_uber_tmap_to_grdecls.py `
   --grdecl-dir $SourceDir `
   --pointset-dir ".\outputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
   --output-dir ".\outputs\Multi-realization Uber approach\03_augmented_grdecls_from_uber_lookup" `

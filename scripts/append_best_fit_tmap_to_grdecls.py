@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import os
 import re
 from collections import defaultdict
@@ -44,7 +45,7 @@ def path_for_io(path: Path) -> str:
 def tokenize_grdecl(path: Path, wanted: set[str]) -> dict[str, list[str]]:
     values: dict[str, list[str]] = {}
     keyword: str | None = None
-    with path.open("r", encoding="utf-8") as handle:
+    with open(path_for_io(path), "r", encoding="utf-8") as handle:
         for raw in handle:
             line = raw.strip()
             if not line or line.startswith("--"):
@@ -222,7 +223,7 @@ def append_properties(grdecl_path: Path, pointset_path: Path, output_path: Path)
     Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
     with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
         out.write(source.read().rstrip() + "\n")
-        out.write("\n-- Synthetic T>Map-style properties mapped from Petrel 3D point set.\n")
+        out.write("\n-- Synthetic T>Map-style properties mapped from a 3D point set.\n")
         out.write(f"-- Source point set: {pointset_path.name}\n")
         out.write(f"-- Missing cells use Continuous NoValue: {NO_VALUE}\n")
         for attr_index, column in enumerate(columns):
@@ -241,17 +242,74 @@ def scenario_token(path: Path) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").lower()
 
 
-def find_pointset_for_grdecl(grdecl_path: Path, pointset_dir: Path) -> Path:
+def find_pointset_for_grdecl(grdecl_path: Path, pointset_dir: Path, reduced: bool = False) -> Path:
     token = scenario_token(grdecl_path)
-    candidates = [p for p in pointset_dir.glob("*_tmap_synthetic") if scenario_token(p).replace("ss_201_cleaned_5", "ss_201_5").startswith(token)]
+    candidates = [
+        p
+        for p in pointset_dir.glob("*_3d_pointset_control_*_tmap_synthetic" if reduced else "*_3d_pointset_tmap_synthetic")
+        if scenario_token(p).replace("ss_201_cleaned_5", "ss_201_5").startswith(token)
+    ]
+    if not candidates:
+        # Legacy fallback for existing synthetic files; new exports use _3d_pointset.
+        candidates = [p for p in pointset_dir.glob("*_tmap_synthetic") if scenario_token(p).replace("ss_201_cleaned_5", "ss_201_5").startswith(token)]
     if not candidates:
         # Fallback to the scenario suffix, e.g. "1_Base" or "4_MinSupply".
         parts = token.split("_fsm_fdm_")
         suffix = parts[-1] if len(parts) > 1 else token
-        candidates = [p for p in pointset_dir.glob(f"*{suffix}*_tmap_synthetic")]
+        candidates = [p for p in pointset_dir.glob(f"*{suffix}*_3d_pointset_tmap_synthetic")]
+        if not candidates:
+            candidates = [p for p in pointset_dir.glob(f"*{suffix}*_tmap_synthetic")]
     if len(candidates) != 1:
         raise ValueError(f"Could not uniquely match {grdecl_path.name} to a point set; candidates: {[p.name for p in candidates]}")
     return candidates[0]
+
+
+def append_interpolated_properties(grdecl_path: Path, pointset_path: Path, output_path: Path, facies_property: str) -> None:
+    """Append sparse Best-fit results by vertical interpolation within facies/I/J columns."""
+    columns, rows = read_pointset(pointset_path)
+    if not columns or columns[0] != "CellIndex":
+        raise ValueError(f"{pointset_path.name} must retain CellIndex after Facies for reduced Best-fit interpolation")
+    properties = columns[1:]
+    if not properties:
+        raise ValueError(f"{pointset_path.name} has no returned T>Map properties")
+    table = defaultdict(list)
+    for x, y, z, attrs in rows:
+        # read_pointset returns attributes beginning with CellIndex. Facies is in
+        # the original row header and is recovered below from a dedicated parse.
+        pass
+    raw_columns = []
+    raw_rows = []
+    in_header = False
+    with pointset_path.open("r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if line == "BEGIN HEADER": in_header = True; continue
+            if line == "END HEADER": in_header = False; continue
+            if in_header: raw_columns.append(line.split(",", 1)[-1]); continue
+            if not line or line.startswith("#") or line == "VERSION 1": continue
+            raw_rows.append(line.split())
+    for parts in raw_rows:
+        facies = int(float(parts[3])); x, y, z = map(float, parts[:3])
+        table[(facies, f"{x:.2f}", f"{y:.2f}")].append((z, parts[5:]))
+    for series in table.values(): series.sort(key=lambda item: item[0])
+    centers = grdecl_cell_centers(grdecl_path)
+    facies_values = [int(float(value)) for value in tokenize_grdecl(grdecl_path, {facies_property})[facies_property] for value in ([value.split('*', 1)[1]] * int(value.split('*', 1)[0]) if '*' in value else [value])]
+    Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
+    with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
+        out.write(source.read().rstrip() + "\n\n-- T>Map properties vertically interpolated from reduced Best-fit points.\n")
+        for attr_index, column in enumerate(properties):
+            values = []
+            for (x, y, z), facies in zip(centers, facies_values):
+                series = table.get((facies, f"{x:.2f}", f"{y:.2f}"))
+                if not series: values.append(NO_VALUE); continue
+                zs = [item[0] for item in series]; pos = bisect.bisect_left(zs, z)
+                if pos == 0: value = series[0][1][attr_index]
+                elif pos == len(zs): value = series[-1][1][attr_index]
+                else:
+                    z0, a0 = series[pos - 1]; z1, a1 = series[pos]
+                    value = f"{float(a0[attr_index]) + (z-z0)/(z1-z0)*(float(a1[attr_index])-float(a0[attr_index])):.6g}"
+                values.append(value)
+            write_property(out, grdecl_keyword(column), values)
 
 
 def main() -> None:
@@ -261,6 +319,8 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--single-grdecl", type=Path, help="Append properties to only this GRDECL file.")
     parser.add_argument("--single-pointset", type=Path, help="Point set to use with --single-grdecl.")
+    parser.add_argument("--vertical-interpolate", action="store_true", help="Interpolate sparse reduced Best-fit point-set results vertically within facies/I/J columns.")
+    parser.add_argument("--property", default="Facies", help="Facies keyword used for reduced Best-fit interpolation.")
     args = parser.parse_args()
 
     if args.single_grdecl:
@@ -269,11 +329,16 @@ def main() -> None:
         grdecls = [(args.single_grdecl, args.single_pointset)]
     else:
         source_grdecls = sorted(path for path in args.grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
-        grdecls = [(path, find_pointset_for_grdecl(path, args.pointset_dir)) for path in source_grdecls]
+        grdecls = [(path, find_pointset_for_grdecl(path, args.pointset_dir, args.vertical_interpolate)) for path in source_grdecls]
 
     for grdecl_path, pointset_path in grdecls:
-        output_name = grdecl_path.with_suffix("").name + "_with_tmap_properties.grdecl"
+        provenance = "_synthetic" if "_tmap_synthetic" in pointset_path.name else ""
+        output_name = grdecl_path.with_suffix("").name + f"_with{provenance}_tmap_properties.grdecl"
         output_path = args.output_dir / output_name
+        if args.vertical_interpolate:
+            append_interpolated_properties(grdecl_path, pointset_path, output_path, args.property)
+            print(f"{grdecl_path.name} <- {pointset_path.name}: vertically interpolated -> {output_path}")
+            continue
         stats = append_properties(grdecl_path, pointset_path, output_path)
         print(
             f"{grdecl_path.name} <- {pointset_path.name}: "

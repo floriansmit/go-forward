@@ -8,3 +8,7 @@ __pycache__/
 
 # Local output folders
 outputs/
+
+# venv and claude
+.venv/
+CLAUDE.md

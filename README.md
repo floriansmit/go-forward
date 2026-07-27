@@ -1,13 +1,13 @@
 # GO-Forward GRDECL → T>Map workflow
 
-This repository provides a reproducible workflow for converting DionisosFlow/Eclipse GRDECL reservoir models into Petrel 3D point sets for T>Map, then returning T>Map properties to GRDECL.
+This repository provides a reproducible workflow for converting DionisosFlow/Eclipse GRDECL reservoir models into T>Map 3D point sets, then returning T>Map properties to GRDECL.
 
 It includes a Streamlit dashboard for inspecting data and running the commands, plus standalone Python scripts for batch processing and reproducible execution. The supplied example outputs are synthetic: they show the full round trip without requiring a live T>Map calculation.
 
 ## What the workflow does
 
 1. Reads one or more GRDECL models containing geometry (`SPECGRID`, `COORD`, `ZCORN`) and an integer facies property.
-2. Builds Petrel-compatible 3D point sets that preserve cell identity.
+2. Builds T>Map 3D point sets that preserve cell identity.
 3. Sends those point sets to T>Map, or creates synthetic T>Map-style properties for demonstration/testing.
 4. Appends or interpolates the returned properties back onto the original GRDECL grids.
 
@@ -17,7 +17,7 @@ The same source grids can be processed with four alternative approaches:
 | --- | --- | --- | --- |
 | **Best-fit** | Treat each realization independently. | Every grid cell in each realization. | Exact cell-centre match. |
 | **Union** | Model all actual facies cells across the realization set. | One facies point set containing cells from every realization. | Exact lookup by realization and cell index. |
-| **Control** | Reduce the number of T>Map points while retaining vertical facies structure. | Top/bottom and intermediate control cells per XY column, realization, and facies. | Vertical interpolation within matching realization, XY column, and facies. |
+| **Control** | Reduce the number of T>Map points while retaining the multi-realization facies envelope. | One shared facies envelope per XY column: shallowest/deepest occurrence across selected realizations plus regular vertical controls. | Interpolate the shared facies/XY control series back into every realization. |
 | **Uber** | Build a reusable regular facies lookup grid. | Regular XY/Z point sets by facies. | Vertical lookup/interpolation back to grid cells. |
 
 The approaches are alternatives; they are not stages that must be run one after another.
@@ -42,6 +42,8 @@ The approaches are alternatives; they are not stages that must be run one after 
 ```
 
 `outputs/` is intentionally excluded from Git: it can be large and is regenerated from the source data. It remains on the local machine after being removed from Git's index.
+
+All generated 3D point-set filenames use the suffix `_3d_pointset`; this distinguishes the exported points from the source GRDECL grid.
 
 ## Requirements
 
@@ -105,16 +107,29 @@ For an actual T>Map project, use the individual build and append commands in [WO
 
 ## Facies configuration
 
-Facies codes are discovered dynamically, so scripts support new integer codes without code changes. Display labels and dashboard colours are defined in [`dashboard/facies_config.json`](dashboard/facies_config.json):
+Facies codes are discovered dynamically, so scripts support new integer codes without code changes. For each new DionisosFlow model, create a source-specific configuration by scanning its GRDECLs and entering the meaning of every observed integer:
+
+```powershell
+& $Python .\scripts\initialize_facies_config.py `
+  --grdecl-dir "C:\path\to\source-grdecls" `
+  --property "FACIES"
+```
+
+This writes `facies_config.json` beside the source GRDECLs. Pass that file to multi-realization builders with `--facies-config`; `regenerate_synthetic_outputs.ps1` selects it automatically when present. The dashboard can import the same file through **Load facies color JSON**.
+
+The configuration records labels, colours, and hand-off metadata:
 
 ```json
 {
   "facies_colors": { "101": "#4e79a7" },
-  "facies_names": { "101": "Offshore" }
+  "facies_names": { "101": "Offshore" },
+  "facies_metadata": {
+    "101": { "category": "non_reservoir", "tmap_enabled": false }
+  }
 }
 ```
 
-Unknown codes remain valid and are written with the label `facies_<code>`.
+If a different model reuses an existing number with another geological meaning, use a separate source folder/configuration, or run the initializer with `--redefine --replace`. Unknown codes remain valid and are written with the label `facies_<code>` until they are defined.
 
 ## Data and reproducibility
 

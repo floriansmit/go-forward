@@ -54,18 +54,27 @@ def read_control_pointsets(pointset_dir: Path):
                     continue
                 if line.startswith("#") or line == "VERSION 1":
                     continue
-                if columns[:6] != ["X", "Y", "Z", "Facies", "Realization", "CellIndex"]:
-                    raise ValueError(f"{path.name} must contain X,Y,Z,Facies,Realization,CellIndex before T>Map properties")
-                if properties is None:
-                    properties = columns[6:]
-                elif properties != columns[6:]:
-                    raise ValueError(f"{path.name} has different property columns")
                 parts = line.split()
+                if columns[:5] == ["X", "Y", "Z", "Facies", "ControlColumn"]:
+                    property_start = 5
+                    realization = 0  # shared realization-envelope control series
+                elif columns[:6] == ["X", "Y", "Z", "Facies", "Realization", "CellIndex"]:
+                    # Backward compatibility with pre-envelope control pointsets.
+                    property_start = 6
+                    realization = int(float(parts[4]))
+                else:
+                    raise ValueError(
+                        f"{path.name} must contain X,Y,Z,Facies,ControlColumn before T>Map properties "
+                        "(or the legacy Realization,CellIndex fields)"
+                    )
+                if properties is None:
+                    properties = columns[property_start:]
+                elif properties != columns[property_start:]:
+                    raise ValueError(f"{path.name} has different property columns")
                 x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
                 facies = int(float(parts[3]))
-                realization = int(float(parts[4]))
                 key = (realization, facies, f"{x:.2f}", f"{y:.2f}")
-                table[key].append((z, parts[6:]))
+                table[key].append((z, parts[property_start:]))
     if properties is None:
         raise SystemExit(f"No control T>Map point sets found in {pointset_dir}")
     for values in table.values():
@@ -115,7 +124,12 @@ def main() -> None:
             for attr_index, column in enumerate(properties):
                 values = []
                 for (x, y, z), facies in zip(centers, facies_values):
-                    series = table.get((realization_index, facies, f"{x:.2f}", f"{y:.2f}"))
+                    # New shared-envelope controls are keyed with realization 0
+                    # and apply to every source realization.  Legacy pointsets
+                    # retain their realization-specific lookup as a fallback.
+                    series = table.get((0, facies, f"{x:.2f}", f"{y:.2f}")) or table.get(
+                        (realization_index, facies, f"{x:.2f}", f"{y:.2f}")
+                    )
                     values.append(interpolate(series, z, attr_index, args.no_extrapolate) if series else NO_VALUE)
                 write_property(out, grdecl_keyword(column), values)
         print(f"{grdecl.name} -> {output_path}")

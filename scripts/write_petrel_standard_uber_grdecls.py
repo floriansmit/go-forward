@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from append_uber_tmap_to_grdecls import (
+from append_multi_realizations_uber_tmap_to_grdecls import (
     DEFAULT_GRDECL_DIR,
     DEFAULT_POINTSET_DIR,
     NO_VALUE,

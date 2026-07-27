@@ -10,5 +10,6 @@ __pycache__/
 # Local output folders
 outputs/
 
-# Claude MD 
+# venv and claude
+.venv/
 CLAUDE.md

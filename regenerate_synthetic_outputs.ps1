@@ -34,7 +34,12 @@ if ([string]::IsNullOrWhiteSpace($SourceDir)) {
     $SourceDir = Join-Path $PSScriptRoot "input\source_grdecls_from_dionisosflow"
 }
 if ([string]::IsNullOrWhiteSpace($FaciesConfig)) {
-    $FaciesConfig = Join-Path $PSScriptRoot "dashboard\facies_config.json"
+    $SourceConfig = Join-Path $SourceDir "facies_config.json"
+    $FaciesConfig = if (Test-Path -LiteralPath $SourceConfig) {
+        $SourceConfig
+    } else {
+        Join-Path $PSScriptRoot "dashboard\facies_config.json"
+    }
 }
 
 $Python = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
@@ -66,33 +71,33 @@ $Outputs = Join-Path $PSScriptRoot "outputs"
 if ($Approach -eq "All" -or $Approach -eq "BestFit") {
     Write-Host "`n=== Best-fit ===" -ForegroundColor Cyan
     $Root = Join-Path $Outputs "Best-fit approach"
-    Invoke-WorkflowPython @("scripts\grdecl_to_petrel_pointsets.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_3d_points_from_original_grdecls"), "--property", $FaciesProperty)
-    Invoke-WorkflowPython @("scripts\generate_tmap_pointsets.py", "--source-dir", (Join-Path $Root "01_3d_points_from_original_grdecls"), "--output-dir", (Join-Path $Root "02_3d_points_with_tmap_data"), "--glob", "*_ReservoirGrid", "--property-profile", $PropertyProfile)
+    Invoke-WorkflowPython @("scripts\build_best_fit_grdecl_to_pointset.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_3d_points_from_original_grdecls"), "--property", $FaciesProperty)
+    Invoke-WorkflowPython @("scripts\generate_synthetic_tmap_data.py", "--source-dir", (Join-Path $Root "01_3d_points_from_original_grdecls"), "--output-dir", (Join-Path $Root "02_3d_points_with_tmap_data"), "--glob", "*_3d_pointset", "--property-profile", $PropertyProfile)
     Invoke-WorkflowPython @("scripts\append_best_fit_tmap_to_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_3d_points_with_tmap_data"), "--output-dir", (Join-Path $Root "03_augmented_grdecls_with_tmap_data"))
 }
 
 if ($Approach -eq "All" -or $Approach -eq "Union") {
     Write-Host "`n=== Multi-realization Union ===" -ForegroundColor Cyan
     $Root = Join-Path $Outputs "Multi-realization union approach"
-    Invoke-WorkflowPython @("scripts\build_union_pointsets_by_facies.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_union_pointsets_by_facies"), "--property", $FaciesProperty, "--facies-config", $FaciesConfig)
-    Invoke-WorkflowPython @("scripts\generate_tmap_pointsets.py", "--source-dir", (Join-Path $Root "01_union_pointsets_by_facies"), "--output-dir", (Join-Path $Root "02_union_pointsets_with_tmap_data"), "--glob", "union_facies_*", "--property-profile", $PropertyProfile)
-    Invoke-WorkflowPython @("scripts\append_union_tmap_to_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_union_pointsets_with_tmap_data"), "--output-dir", (Join-Path $Root "03_augmented_grdecls_from_union_lookup"))
+    Invoke-WorkflowPython @("scripts\build_multi_realizations_grdecls_to_union_pointsets.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_union_pointsets_by_facies"), "--property", $FaciesProperty, "--facies-config", $FaciesConfig, "--tmap-enabled-only")
+    Invoke-WorkflowPython @("scripts\generate_synthetic_tmap_data.py", "--source-dir", (Join-Path $Root "01_union_pointsets_by_facies"), "--output-dir", (Join-Path $Root "02_union_pointsets_with_tmap_data"), "--glob", "union_facies_*", "--property-profile", $PropertyProfile)
+    Invoke-WorkflowPython @("scripts\append_multi_realizations_union_tmap_to_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_union_pointsets_with_tmap_data"), "--output-dir", (Join-Path $Root "03_augmented_grdecls_from_union_lookup"))
 }
 
 if ($Approach -eq "All" -or $Approach -eq "Control") {
     Write-Host "`n=== Multi-realization Control ===" -ForegroundColor Cyan
     $Root = Join-Path $Outputs "Multi-realization control approach"
-    Invoke-WorkflowPython @("scripts\build_control_pointsets_by_facies.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_control_pointsets_by_facies"), "--property", $FaciesProperty, "--max-vertical-spacing", $ControlVerticalSpacing, "--facies-config", $FaciesConfig)
-    Invoke-WorkflowPython @("scripts\generate_tmap_pointsets.py", "--source-dir", (Join-Path $Root "01_control_pointsets_by_facies"), "--output-dir", (Join-Path $Root "02_control_pointsets_with_tmap_data"), "--glob", "control_facies_*", "--property-profile", $PropertyProfile)
-    Invoke-WorkflowPython @("scripts\append_control_tmap_to_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_control_pointsets_with_tmap_data"), "--output-dir", (Join-Path $Root "03_augmented_grdecls_from_control_interpolation"), "--property", $FaciesProperty)
+    Invoke-WorkflowPython @("scripts\build_multi_realizations_grdecls_to_control_pointsets.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_control_pointsets_by_facies"), "--property", $FaciesProperty, "--max-vertical-spacing", $ControlVerticalSpacing, "--facies-config", $FaciesConfig, "--tmap-enabled-only")
+    Invoke-WorkflowPython @("scripts\generate_synthetic_tmap_data.py", "--source-dir", (Join-Path $Root "01_control_pointsets_by_facies"), "--output-dir", (Join-Path $Root "02_control_pointsets_with_tmap_data"), "--glob", "control_facies_*", "--property-profile", $PropertyProfile)
+    Invoke-WorkflowPython @("scripts\append_multi_realizations_control_tmap_to_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_control_pointsets_with_tmap_data"), "--output-dir", (Join-Path $Root "03_augmented_grdecls_from_control_interpolation"), "--property", $FaciesProperty)
 }
 
 if ($Approach -eq "All" -or $Approach -eq "Uber") {
     Write-Host "`n=== Multi-realization Uber ===" -ForegroundColor Cyan
     $Root = Join-Path $Outputs "Multi-realization Uber approach"
-    Invoke-WorkflowPython @("scripts\build_uber_pointsets_by_facies.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_uber_pointsets_by_facies"), "--property", $FaciesProperty, "--vertical-spacing", $UberVerticalSpacing, "--facies-config", $FaciesConfig)
-    Invoke-WorkflowPython @("scripts\generate_tmap_pointsets.py", "--source-dir", (Join-Path $Root "01_uber_pointsets_by_facies"), "--output-dir", (Join-Path $Root "02_uber_pointsets_with_tmap_data"), "--glob", "uber_facies_*", "--property-profile", $PropertyProfile)
-    Invoke-WorkflowPython @("scripts\append_uber_tmap_to_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_uber_pointsets_with_tmap_data"), "--output-dir", (Join-Path $Root "03_augmented_grdecls_from_uber_lookup"), "--property", $FaciesProperty)
+    Invoke-WorkflowPython @("scripts\build_multi_realizations_grdecls_to_uber_pointsets.py", "--grdecl-dir", $SourceDir, "--output-dir", (Join-Path $Root "01_uber_pointsets_by_facies"), "--property", $FaciesProperty, "--vertical-spacing", $UberVerticalSpacing, "--facies-config", $FaciesConfig, "--tmap-enabled-only")
+    Invoke-WorkflowPython @("scripts\generate_synthetic_tmap_data.py", "--source-dir", (Join-Path $Root "01_uber_pointsets_by_facies"), "--output-dir", (Join-Path $Root "02_uber_pointsets_with_tmap_data"), "--glob", "uber_facies_*", "--property-profile", $PropertyProfile)
+    Invoke-WorkflowPython @("scripts\append_multi_realizations_uber_tmap_to_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_uber_pointsets_with_tmap_data"), "--output-dir", (Join-Path $Root "03_augmented_grdecls_from_uber_lookup"), "--property", $FaciesProperty)
     Invoke-WorkflowPython @("scripts\write_petrel_standard_uber_grdecls.py", "--grdecl-dir", $SourceDir, "--pointset-dir", (Join-Path $Root "02_uber_pointsets_with_tmap_data"), "--output-dir", (Join-Path $Root "04_petrel_standard_grdecls_from_uber_lookup"))
 }
 

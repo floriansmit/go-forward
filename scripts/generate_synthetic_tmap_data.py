@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
-import shutil
 from collections import Counter
 from pathlib import Path
 
@@ -94,15 +93,15 @@ def source_header_columns(path: Path) -> list[str]:
             if in_header:
                 columns.append(line)
     if len(columns) < 4:
-        raise ValueError(f"{path} does not look like a Petrel point-set file")
+        raise ValueError(f"{path} does not look like a T>Map point-set file")
     return columns
 
 
 def write_header(handle, tmap_columns: list[str], passthrough_columns: list[str]) -> None:
-    handle.write("# Petrel Points with attributes\n")
+    handle.write("# T>Map 3D point set with attributes\n")
     handle.write("# Unit in X and Y direction: m\n")
     handle.write("# Unit in depth: m\n")
-    handle.write("# Synthetic T>Map-style properties generated from DionisosFlow/Petrel point sets\n")
+    handle.write("# Synthetic T>Map-style properties generated from DionisosFlow 3D point sets\n")
     handle.write("# T>Map project file: MVP synthetic placeholder\n")
     handle.write("# T>Map run name: synthetic_diagenetic_properties\n")
     handle.write("# TCF name: synthetic_placeholder_tcf\n")
@@ -261,11 +260,6 @@ def write_pointset(source: Path, columns: list[str], output_dir: Path) -> int:
     return count
 
 
-def copy_crs_sidecars(source_dir: Path, output_dir: Path) -> None:
-    for xml in source_dir.glob("*.crsmeta.xml"):
-        shutil.copy2(xml, output_dir / xml.name.replace(".crsmeta.xml", "_tmap_synthetic.crsmeta.xml"))
-
-
 def count_facies_in_sources(source_dir: Path, glob_pattern: str) -> Counter[int]:
     counts = Counter()
     for source in sorted(source_dir.glob(glob_pattern)):
@@ -304,7 +298,7 @@ def write_facies_readme(output_dir: Path, facies_counts: Counter[int]) -> None:
     lines.extend(
         [
             "",
-            "Generated T>Map-style point sets retain the original XYZ and facies code from the Petrel point exports,",
+            "Generated T>Map-style point sets retain the original XYZ and facies code from the source 3D point sets,",
             "then append the attributes from `original_data/tmap_example_data/run4_fluvio_estuarine_facies_8_9`.",
             "Porosity, cement, mineral, clay, matrix, and compaction fractions are written as 0-1 fractions.",
             "Permeability is written in mD and clamped to 0-10000.",
@@ -314,29 +308,27 @@ def write_facies_readme(output_dir: Path, facies_counts: Counter[int]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate synthetic T>Map-style properties for Petrel point-set ASCII files.")
+    parser = argparse.ArgumentParser(description="Generate synthetic T>Map-style properties for T>Map 3D point-set ASCII files.")
     parser.add_argument("--source-dir", type=Path, default=SOURCE_DIR)
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     parser.add_argument("--example", type=Path, default=EXAMPLE, help="T>Map example point-set file used for attribute names.")
-    parser.add_argument("--glob", default="*_ReservoirGrid", help="Input point-set filename glob.")
+    parser.add_argument("--glob", default="*_3d_pointset", help="Input point-set filename glob.")
     parser.add_argument(
         "--property-profile",
         choices=("all", "reservoir_quality"),
         default="all",
         help="Use 'reservoir_quality' to write only total porosity and permeability mean/stdev/P10/P25/P50/P75/P90.",
     )
-    parser.add_argument("--no-crsmeta", action="store_true", help="Do not copy CRS companion XML files.")
     args = parser.parse_args()
 
-    args.output_dir.mkdir(exist_ok=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     columns = filter_tmap_columns(tmap_header_columns(args.example), args.property_profile)
     totals = []
     for source in sorted(args.source_dir.glob(args.glob)):
+        # Ignore stale CRS sidecars from pre-CRS-removal workflow runs.
         if source.name.endswith(".crsmeta.xml"):
             continue
         totals.append((source.name, write_pointset(source, columns, args.output_dir)))
-    if not args.no_crsmeta:
-        copy_crs_sidecars(args.source_dir, args.output_dir)
     facies_counts = count_facies_in_sources(args.source_dir, args.glob)
     write_facies_readme(args.output_dir, facies_counts)
     print(f"Wrote {len(totals)} synthetic T>Map point sets to {args.output_dir}")

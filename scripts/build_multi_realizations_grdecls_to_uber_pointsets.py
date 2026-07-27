@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import re
-import shutil
 from pathlib import Path
 
 from grdecl_utils import grdecl_cell_centers, tokenize_grdecl
@@ -13,7 +13,6 @@ from facies_config import DEFAULT_CONFIG_PATH, facies_label
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization Uber approach" / "01_uber_pointsets_by_facies"
-DEFAULT_CRS_TEMPLATE_DIR = ROOT / "original_data" / "original_data_dionisosflow_petrel" / "Petrel points with attributes format"
 
 
 def safe_name(text: str) -> str:
@@ -52,10 +51,9 @@ def z_levels(z_min: float, z_max: float, spacing: float) -> list[float]:
     return [start + index * spacing for index in range(count)]
 
 
-def copy_crs_sidecar(output_path: Path, template_dir: Path) -> None:
-    templates = sorted(template_dir.glob("*.crsmeta.xml"))
-    if templates:
-        shutil.copy2(templates[0], output_path.with_name(output_path.name + ".crsmeta.xml"))
+def tmap_enabled_facies(config_path: Path) -> set[int]:
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    return {int(code) for code, item in payload.get("facies_metadata", {}).items() if isinstance(item, dict) and item.get("tmap_enabled", True)}
 
 
 def main() -> None:
@@ -63,18 +61,19 @@ def main() -> None:
     parser.add_argument("--grdecl-dir", type=Path, default=DEFAULT_GRDECL_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--property", default="Facies")
+    parser.add_argument("--grdecl", action="append", type=Path, help="Source GRDECL to include; repeat to select a subset. Defaults to all files in --grdecl-dir.")
     parser.add_argument("--facies-config", type=Path, default=DEFAULT_CONFIG_PATH, help="JSON file containing optional facies_names labels.")
+    parser.add_argument("--tmap-enabled-only", action="store_true", help="Exclude facies disabled for T>Map in --facies-config.")
     parser.add_argument("--vertical-spacing", default="auto", help="'auto' or a spacing in metres, e.g. 10, 25, 50.")
     parser.add_argument("--spacing-choices", default="10,25,50", help="Comma-separated metres used when --vertical-spacing auto.")
     parser.add_argument("--max-total-points", type=int, default=1_000_000)
     parser.add_argument("--include-zero-facies", action="store_true", help="Include facies code 0 in the Uber outputs.")
-    parser.add_argument("--crs-template-dir", type=Path, default=DEFAULT_CRS_TEMPLATE_DIR)
-    parser.add_argument("--no-crsmeta", action="store_true")
     args = parser.parse_args()
 
-    grdecls = sorted(path for path in args.grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
+    grdecls = args.grdecl or sorted(path for path in args.grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
     if not grdecls:
         raise SystemExit(f"No GRDECL files found in {args.grdecl_dir}")
+    enabled = tmap_enabled_facies(args.facies_config) if args.tmap_enabled_only else None
 
     nx, ny, nz = grid_dimensions(grdecls[0])
     first_centers = grdecl_cell_centers(grdecls[0])
@@ -85,7 +84,7 @@ def main() -> None:
     for grdecl in grdecls:
         all_centers.extend(grdecl_cell_centers(grdecl))
         values = facies_values(grdecl, args.property)
-        all_facies.update(values if args.include_zero_facies else {value for value in values if value != 0})
+        all_facies.update(value for value in values if (args.include_zero_facies or value != 0) and (enabled is None or value in enabled))
     z_min = min(z for _, _, z in all_centers)
     z_max = max(z for _, _, z in all_centers)
 
@@ -101,7 +100,7 @@ def main() -> None:
         label = facies_label(facies, args.facies_config)
         path = args.output_dir / f"uber_facies_{facies:02d}_{safe_name(label)}_{spacing:g}m"
         with path.open("w", encoding="utf-8", newline="\n") as out:
-            out.write("# Petrel Points with attributes\n")
+            out.write("# T>Map 3D point set with attributes\n")
             out.write("# Unit in X and Y direction: m\n")
             out.write("# Unit in depth: m\n")
             out.write("# Uber facies point set with fixed XY grid and regular vertical sampling\n")
@@ -111,8 +110,6 @@ def main() -> None:
             for x, y in xy_points:
                 for z in zs:
                     out.write(f"{x:.2f} {y:.2f} {z:.2f} {facies}\n")
-        if not args.no_crsmeta:
-            copy_crs_sidecar(path, args.crs_template_dir)
         print(f"facies {facies}: {len(xy_points) * len(zs)} points -> {path.name}")
 
     print(f"XY points: {len(xy_points)}, Z levels: {len(zs)}, spacing: {spacing:g} m, total points: {len(xy_points) * len(zs) * len(all_facies)}")

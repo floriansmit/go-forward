@@ -77,7 +77,8 @@ def main() -> None:
     nx, ny, _ = dimensions(grdecls[0])
     reference_centers = grdecl_cell_centers(grdecls[0])
     envelopes: dict[tuple[int, int], list[float]] = defaultdict(list)
-    for grdecl in grdecls:
+    for model_index, grdecl in enumerate(grdecls, start=1):
+        print(f"PROGRESS {model_index}/{len(grdecls)} Scanning {grdecl.name}", flush=True)
         model_dims = dimensions(grdecl)
         if model_dims[:2] != (nx, ny):
             raise ValueError(f"{grdecl.name}: grid I/J dimensions {model_dims[:2]} do not match {grdecls[0].name}: {(nx, ny)}")
@@ -98,7 +99,11 @@ def main() -> None:
         for z in control_levels(bottom_z, top_z, args.max_vertical_spacing):
             output_rows[facies].append(f"{x:.2f} {y:.2f} {z:.2f} {facies} {ij}\n")
 
-    for facies, rows in sorted(output_rows.items()):
+    for facies_index, (facies, rows) in enumerate(sorted(output_rows.items()), start=1):
+        print(
+            f"Writing control pointset {facies_index}/{len(output_rows)} for facies {facies}",
+            flush=True,
+        )
         label = facies_label(facies, args.facies_config)
         path = args.output_dir / f"control_facies_{facies:02d}_{safe_name(label)}_{args.max_vertical_spacing:g}m"
         with path.open("w", encoding="utf-8", newline="\n") as out:

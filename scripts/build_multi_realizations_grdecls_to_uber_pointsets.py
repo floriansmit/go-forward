@@ -36,19 +36,23 @@ def facies_values(path: Path, keyword: str) -> set[int]:
     return expanded
 
 
-def choose_spacing(z_min: float, z_max: float, n_xy: int, n_facies: int, choices: list[float], max_total_points: int) -> float:
+def choose_spacing(bounds: list[tuple[float, float]], n_facies: int, choices: list[float], max_total_points: int) -> float:
     for spacing in sorted(choices):
-        n_z = int(math.floor((z_max - z_min) / spacing)) + 1
-        if n_xy * n_z * n_facies <= max_total_points:
+        count = sum(len(z_levels(bottom, top, spacing)) for bottom, top in bounds) * n_facies
+        if count <= max_total_points:
             return spacing
     return max(choices)
 
 
 def z_levels(z_min: float, z_max: float, spacing: float) -> list[float]:
-    start = math.floor(z_min / spacing) * spacing
-    stop = math.ceil(z_max / spacing) * spacing
-    count = int(round((stop - start) / spacing)) + 1
-    return [start + index * spacing for index in range(count)]
+    levels = [z_max]
+    z = z_max - spacing
+    while z > z_min:
+        levels.append(z)
+        z -= spacing
+    if abs(levels[-1] - z_min) > 1e-9:
+        levels.append(z_min)
+    return levels
 
 
 def tmap_enabled_facies(config_path: Path) -> set[int]:
@@ -79,40 +83,45 @@ def main() -> None:
     first_centers = grdecl_cell_centers(grdecls[0])
     xy_points = [(first_centers[j * nx + i][0], first_centers[j * nx + i][1]) for j in range(ny) for i in range(nx)]
 
-    all_centers = []
+    column_bounds: list[list[float]] = [[] for _ in xy_points]
     all_facies = set()
-    for grdecl in grdecls:
-        all_centers.extend(grdecl_cell_centers(grdecl))
+    for model_index, grdecl in enumerate(grdecls, start=1):
+        print(f"PROGRESS {model_index}/{len(grdecls)} Scanning {grdecl.name}", flush=True)
+        centres = grdecl_cell_centers(grdecl)
+        if grid_dimensions(grdecl)[:2] != (nx, ny):
+            raise ValueError(f"{grdecl.name} does not match the reference I/J dimensions")
+        for index, (_, _, z) in enumerate(centres):
+            column_bounds[index % (nx * ny)].append(z)
         values = facies_values(grdecl, args.property)
         all_facies.update(value for value in values if (args.include_zero_facies or value != 0) and (enabled is None or value in enabled))
-    z_min = min(z for _, _, z in all_centers)
-    z_max = max(z for _, _, z in all_centers)
+    bounds = [(min(zs), max(zs)) for zs in column_bounds]
 
     if args.vertical_spacing == "auto":
         choices = [float(value) for value in args.spacing_choices.split(",")]
-        spacing = choose_spacing(z_min, z_max, len(xy_points), len(all_facies), choices, args.max_total_points)
+        spacing = choose_spacing(bounds, len(all_facies), choices, args.max_total_points)
     else:
         spacing = float(args.vertical_spacing)
-    zs = z_levels(z_min, z_max, spacing)
+    levels_by_column = [z_levels(bottom, top, spacing) for bottom, top in bounds]
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    for facies in sorted(all_facies):
+    for facies_index, facies in enumerate(sorted(all_facies), start=1):
+        print(f"Writing Uber pointset {facies_index}/{len(all_facies)} for facies {facies}", flush=True)
         label = facies_label(facies, args.facies_config)
         path = args.output_dir / f"uber_facies_{facies:02d}_{safe_name(label)}_{spacing:g}m"
         with path.open("w", encoding="utf-8", newline="\n") as out:
             out.write("# T>Map 3D point set with attributes\n")
             out.write("# Unit in X and Y direction: m\n")
             out.write("# Unit in depth: m\n")
-            out.write("# Uber facies point set with fixed XY grid and regular vertical sampling\n")
+            out.write("# Uber facies point set following the local multi-realization top/base envelope in each I/J column\n")
             out.write("VERSION 1\n")
             out.write("BEGIN HEADER\n")
             out.write("X\nY\nZ\nINT,Facies\nEND HEADER\n")
-            for x, y in xy_points:
+            for (x, y), zs in zip(xy_points, levels_by_column):
                 for z in zs:
                     out.write(f"{x:.2f} {y:.2f} {z:.2f} {facies}\n")
-        print(f"facies {facies}: {len(xy_points) * len(zs)} points -> {path.name}")
+        print(f"facies {facies}: {sum(len(zs) for zs in levels_by_column)} points -> {path.name}")
 
-    print(f"XY points: {len(xy_points)}, Z levels: {len(zs)}, spacing: {spacing:g} m, total points: {len(xy_points) * len(zs) * len(all_facies)}")
+    print(f"XY points: {len(xy_points)}, local top/base envelope, spacing: {spacing:g} m, total points: {sum(len(zs) for zs in levels_by_column) * len(all_facies)}")
 
 
 if __name__ == "__main__":

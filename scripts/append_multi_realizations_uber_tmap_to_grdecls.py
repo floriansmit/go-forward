@@ -93,7 +93,8 @@ def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, no
     Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
 
     grdecls = sorted(path for path in grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
-    for grdecl_path in grdecls:
+    for realization_index, grdecl_path in enumerate(grdecls, start=1):
+        print(f"PROGRESS {realization_index}/{len(grdecls)} Appending to {grdecl_path.name}", flush=True)
         centers = grdecl_cell_centers(grdecl_path)
         facies_values = expanded_facies_values(grdecl_path, facies_property)
         if len(centers) != len(facies_values):

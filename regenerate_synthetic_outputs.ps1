@@ -15,6 +15,7 @@ example outputs in this repository; it does not replace a real T>Map run.
 #>
 [CmdletBinding()]
 param(
+    [string]$Project = "SS_201_Gassum_V0",
     [string]$SourceDir,
     [string]$FaciesProperty = "Facies",
     [string]$FaciesConfig,
@@ -31,7 +32,7 @@ $ErrorActionPreference = "Stop"
 # $PSScriptRoot is populated only after PowerShell has evaluated the parameter
 # block, so resolve script-relative defaults here rather than in param().
 if ([string]::IsNullOrWhiteSpace($SourceDir)) {
-    $SourceDir = Join-Path $PSScriptRoot "input\source_grdecls_from_dionisosflow"
+    $SourceDir = Join-Path $PSScriptRoot "input\$Project\source_grdecls"
 }
 if ([string]::IsNullOrWhiteSpace($FaciesConfig)) {
     $SourceConfig = Join-Path $SourceDir "facies_config.json"
@@ -66,7 +67,7 @@ function Invoke-WorkflowPython {
     }
 }
 
-$Outputs = Join-Path $PSScriptRoot "outputs"
+$Outputs = Join-Path (Join-Path $PSScriptRoot "outputs") $Project
 
 if ($Approach -eq "All" -or $Approach -eq "BestFit") {
     Write-Host "`n=== Best-fit ===" -ForegroundColor Cyan

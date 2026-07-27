@@ -1,4 +1,4 @@
-# DionisosFlow GRDECL → T>Map workflow
+# GO-Forward: GRDECL → T>Map → DFN-preparation workflow
 
 Choose **one** approach below. The approaches are alternatives, not consecutive stages.
 
@@ -15,16 +15,20 @@ Open PowerShell in this workspace and set the variables once:
 $Python = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 if (-not (Test-Path $Python)) { $Python = "python" }
 
-$SourceDir = "C:\path\to\your\source-grdecls"
+$Project = "SS_201_Gassum_V0"
+$SourceDir = ".\input\$Project\source_grdecls"
 $FaciesProperty = "Facies"       # Change to FACIES, FaciesCode, etc. when needed.
 $FaciesConfig = "$SourceDir\facies_config.json"
+$ProjectOutputs = ".\outputs\$Project"
 ```
+
+The dashboard begins with the same project choice in the left sidebar. Each project has its own `input\<project>\source_grdecls`, `facies_config.json`, and `outputs\<project>` folders. Create a project in the dashboard before copying in a new GRDECL set.
 
 The point-set builders create folders when needed. Before starting a fresh source-data set, clear or replace the relevant `outputs\<approach>` folder so old facies point sets cannot be sent to T>Map again.
 
 ## Recreate the example outputs in one command
 
-The repository includes `regenerate_synthetic_outputs.ps1` to recreate all current example outputs from the source GRDECLs. It runs the local **synthetic** T>Map generator, so it is suitable for a clean checkout, demonstration, and testing—not as a replacement for an actual T>Map calculation.
+The repository includes `regenerate_synthetic_outputs.ps1` to recreate the synthetic pointset and augmented-GRDECL outputs from the source GRDECLs. It runs the local **synthetic** T>Map generator, so it is suitable for a clean checkout, demonstration, and testing—not as a replacement for an actual T>Map calculation. It intentionally stops before DFN preparation, because Tab 4 requires selected facies formulas, property inputs, and optional fallback settings.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1
@@ -35,6 +39,8 @@ To rebuild just one workflow, for example Control:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 -Approach Control
 ```
+
+The launcher defaults to `SS_201_Gassum_V0`; use `-Project "My_Project"` for another project.
 
 For a new GRDECL set or a different facies keyword:
 
@@ -102,7 +108,7 @@ Use when each realization should be calculated and mapped back independently.
 ```powershell
 & $Python .\scripts\build_best_fit_grdecl_to_pointset.py `
   --grdecl-dir $SourceDir `
-  --output-dir ".\outputs\Best-fit approach\01_3d_points_from_original_grdecls" `
+  --output-dir "$ProjectOutputs\Best-fit approach\01_3d_points_from_original_grdecls" `
   --property $FaciesProperty
 ```
 
@@ -112,8 +118,8 @@ Each source model produces a 3D point set with the same base filename plus `_3d_
 
 ```powershell
 & $Python .\scripts\generate_synthetic_tmap_data.py `
-  --source-dir ".\outputs\Best-fit approach\01_3d_points_from_original_grdecls" `
-  --output-dir ".\outputs\Best-fit approach\02_3d_points_with_tmap_data" `
+  --source-dir "$ProjectOutputs\Best-fit approach\01_3d_points_from_original_grdecls" `
+  --output-dir "$ProjectOutputs\Best-fit approach\02_3d_points_with_tmap_data" `
   --glob "*_3d_pointset" `
   --property-profile $Profile
 ```
@@ -123,8 +129,8 @@ Each source model produces a 3D point set with the same base filename plus `_3d_
 ```powershell
 & $Python .\scripts\append_best_fit_tmap_to_grdecls.py `
   --grdecl-dir $SourceDir `
-  --pointset-dir ".\outputs\Best-fit approach\02_3d_points_with_tmap_data" `
-  --output-dir ".\outputs\Best-fit approach\03_augmented_grdecls_with_tmap_data"
+  --pointset-dir "$ProjectOutputs\Best-fit approach\02_3d_points_with_tmap_data" `
+  --output-dir "$ProjectOutputs\Best-fit approach\03_augmented_grdecls_with_tmap_data"
 ```
 
 ## 2. Multi-realization Union: all actual cells by facies
@@ -136,7 +142,7 @@ Use when T>Map can process every actual facies cell across the realization set. 
 ```powershell
 & $Python .\scripts\build_multi_realizations_grdecls_to_union_pointsets.py `
   --grdecl-dir $SourceDir `
-  --output-dir ".\outputs\Multi-realization union approach\01_union_pointsets_by_facies" `
+  --output-dir "$ProjectOutputs\Multi-realization union approach\01_union_pointsets_by_facies" `
   --property $FaciesProperty `
   --facies-config $FaciesConfig
 ```
@@ -145,8 +151,8 @@ Use when T>Map can process every actual facies cell across the realization set. 
 
 ```powershell
 & $Python .\scripts\generate_synthetic_tmap_data.py `
-  --source-dir ".\outputs\Multi-realization union approach\01_union_pointsets_by_facies" `
-  --output-dir ".\outputs\Multi-realization union approach\02_union_pointsets_with_tmap_data" `
+  --source-dir "$ProjectOutputs\Multi-realization union approach\01_union_pointsets_by_facies" `
+  --output-dir "$ProjectOutputs\Multi-realization union approach\02_union_pointsets_with_tmap_data" `
   --glob "union_facies_*" `
   --property-profile $Profile
 ```
@@ -156,8 +162,8 @@ Use when T>Map can process every actual facies cell across the realization set. 
 ```powershell
 & $Python .\scripts\append_multi_realizations_union_tmap_to_grdecls.py `
   --grdecl-dir $SourceDir `
-  --pointset-dir ".\outputs\Multi-realization union approach\02_union_pointsets_with_tmap_data" `
-  --output-dir ".\outputs\Multi-realization union approach\03_augmented_grdecls_from_union_lookup"
+  --pointset-dir "$ProjectOutputs\Multi-realization union approach\02_union_pointsets_with_tmap_data" `
+  --output-dir "$ProjectOutputs\Multi-realization union approach\03_augmented_grdecls_from_union_lookup"
 ```
 
 ## 3. Multi-realization Control: shared facies-envelope controls
@@ -173,7 +179,7 @@ For example, if a facies occurs from -1450 to -1650 m in most models but from -1
 ```powershell
 & $Python .\scripts\build_multi_realizations_grdecls_to_control_pointsets.py `
   --grdecl-dir $SourceDir `
-  --output-dir ".\outputs\Multi-realization control approach\01_control_pointsets_by_facies" `
+  --output-dir "$ProjectOutputs\Multi-realization control approach\01_control_pointsets_by_facies" `
   --property $FaciesProperty `
   --max-vertical-spacing 50 `
   --facies-config $FaciesConfig
@@ -183,8 +189,8 @@ For example, if a facies occurs from -1450 to -1650 m in most models but from -1
 
 ```powershell
 & $Python .\scripts\generate_synthetic_tmap_data.py `
-  --source-dir ".\outputs\Multi-realization control approach\01_control_pointsets_by_facies" `
-  --output-dir ".\outputs\Multi-realization control approach\02_control_pointsets_with_tmap_data" `
+  --source-dir "$ProjectOutputs\Multi-realization control approach\01_control_pointsets_by_facies" `
+  --output-dir "$ProjectOutputs\Multi-realization control approach\02_control_pointsets_with_tmap_data" `
   --glob "control_facies_*" `
   --property-profile $Profile
 ```
@@ -194,8 +200,8 @@ For example, if a facies occurs from -1450 to -1650 m in most models but from -1
 ```powershell
 & $Python .\scripts\append_multi_realizations_control_tmap_to_grdecls.py `
   --grdecl-dir $SourceDir `
-  --pointset-dir ".\outputs\Multi-realization control approach\02_control_pointsets_with_tmap_data" `
-  --output-dir ".\outputs\Multi-realization control approach\03_augmented_grdecls_from_control_interpolation" `
+  --pointset-dir "$ProjectOutputs\Multi-realization control approach\02_control_pointsets_with_tmap_data" `
+  --output-dir "$ProjectOutputs\Multi-realization control approach\03_augmented_grdecls_from_control_interpolation" `
   --property $FaciesProperty
 ```
 
@@ -208,7 +214,7 @@ Use to create one facies-specific regular XY/Z lookup library that can be reused
 ```powershell
 & $Python .\scripts\build_multi_realizations_grdecls_to_uber_pointsets.py `
   --grdecl-dir $SourceDir `
-  --output-dir ".\outputs\Multi-realization Uber approach\01_uber_pointsets_by_facies" `
+  --output-dir "$ProjectOutputs\Multi-realization Uber approach\01_uber_pointsets_by_facies" `
   --property $FaciesProperty `
   --vertical-spacing 25 `
   --facies-config $FaciesConfig
@@ -220,8 +226,8 @@ Use `--vertical-spacing auto` to choose from the default `10,25,50 m` candidates
 
 ```powershell
 & $Python .\scripts\generate_synthetic_tmap_data.py `
-  --source-dir ".\outputs\Multi-realization Uber approach\01_uber_pointsets_by_facies" `
-  --output-dir ".\outputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
+  --source-dir "$ProjectOutputs\Multi-realization Uber approach\01_uber_pointsets_by_facies" `
+  --output-dir "$ProjectOutputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
   --glob "uber_facies_*" `
   --property-profile $Profile
 ```
@@ -231,8 +237,8 @@ Use `--vertical-spacing auto` to choose from the default `10,25,50 m` candidates
 ```powershell
 & $Python .\scripts\append_multi_realizations_uber_tmap_to_grdecls.py `
   --grdecl-dir $SourceDir `
-  --pointset-dir ".\outputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
-  --output-dir ".\outputs\Multi-realization Uber approach\03_augmented_grdecls_from_uber_lookup" `
+  --pointset-dir "$ProjectOutputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
+  --output-dir "$ProjectOutputs\Multi-realization Uber approach\03_augmented_grdecls_from_uber_lookup" `
   --property $FaciesProperty
 ```
 
@@ -241,14 +247,47 @@ Use `--vertical-spacing auto` to choose from the default `10,25,50 m` candidates
 ```powershell
 & $Python .\scripts\write_petrel_standard_uber_grdecls.py `
   --grdecl-dir $SourceDir `
-  --pointset-dir ".\outputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
-  --output-dir ".\outputs\Multi-realization Uber approach\04_petrel_standard_grdecls_from_uber_lookup"
+  --pointset-dir "$ProjectOutputs\Multi-realization Uber approach\02_uber_pointsets_with_tmap_data" `
+  --output-dir "$ProjectOutputs\Multi-realization Uber approach\04_petrel_standard_grdecls_from_uber_lookup"
 ```
 
 The `03_*` Uber output contains the complete reservoir-quality property profile. The `04_*` output uses Petrel/Eclipse-friendly property names (`FACIES`, `PORO`, `PERMX`, `PERMY`, `PERMZ`, etc.).
 
+## 5. Prepare DFN inputs (dashboard Tab 4)
+
+Use Tab 4 after a real or synthetic T>Map result has been appended. It writes approach-specific folders:
+
+```text
+Best-fit approach/04_DFN_prepared_grdecls_with_tmap_data/
+Multi-realization union approach/04_DFN_prepared_grdecls_from_union_lookup/
+Multi-realization control approach/04_DFN_prepared_grdecls_from_control_interpolation/
+Multi-realization Uber approach/05_DFN_prepared_grdecls_from_uber_lookup/
+```
+
+For Best-fit, select one augmented model. For Union, Control, or Uber, Tab 4 selects all augmented realizations by default, but allows a subset. Configure facies formulas and property choices in the dashboard before writing. The output adds Young’s, bulk and shear modulus, Poisson’s ratio, friction, cohesion, tensile strength, fracture energy, and `GEOMECHSOURCE`.
+
+The optional shale fallback is used only for facies assigned `shale_porosity_stress` where T>Map porosity is absent. It applies a configurable depth-compaction porosity curve and effective-stress gradient. `GEOMECHSOURCE=1` means T>Map-derived; `2` means this fallback was used.
+
+The underlying writer can also be called after a `geomechanics_config.json` has been created in Tab 4:
+
+```powershell
+& $Python .\scripts\assign_geomechanical_properties.py `
+  --input-grdecl "<augmented-grdecl>" `
+  --output-dir "<approach-specific-DFN-folder>" `
+  --facies-property $FaciesProperty `
+  --porosity-property "POROMEAN" `
+  --config "<folder-with-geomechanics_config.json>" `
+  --shale-fallback
+```
+
+## 6. DFM/DFN Generator handoff (dashboard Tab 5)
+
+Tab 5 selects DFN-prepared GRDECLs but does not yet launch an executable. The intended implementation is a detached background-process launcher that writes a versioned run configuration, manifest, stdout/stderr logs, and output folder under the relevant approach. This is necessary because production fracture calculations may run for hours.
+
+The inspected legacy JointFlow standalone program takes a text configuration file and represents a 2D gridblock model. It does not provide the intended direct GRDECL handoff. Integration should target Michael Welch’s updated compiled executable that can ingest GRDECL geometry/properties and an accompanying configuration file. Confirm its command-line syntax, required GRDECL property names/units, deformation-episode schema, K-layer handling, NoValue rules, and output layout before enabling a launcher.
+
 ## Property profile and import notes
 
-`reservoir_quality` returns porosity/permeability mean, standard deviation, and P10/P25/P50/P75/P90. Appended GRDECL keywords are shortened for Eclipse/Petrel compatibility. The Uber Petrel-standard writer produces the import-oriented mean/P10/P50/P90/standard-deviation subset plus `FACIES`, `SATNUM`, `ROCK`, and `FIPNUM`.
+`reservoir_quality` returns porosity/permeability mean, standard deviation, and P10/P25/P50/P75/P90. For synthetic demonstrations it also returns effective stress and cement fields used by Tab 4. Appended GRDECL keywords are shortened for Eclipse/Petrel compatibility. The Uber Petrel-standard writer produces the import-oriented mean/P10/P50/P90/standard-deviation subset plus `FACIES`, `SATNUM`, `ROCK`, and `FIPNUM`.
 
 If returned T>Map files are missing an identity column or use a different row order, do not append them: recreate/return the point sets with their original headers and ID columns intact.

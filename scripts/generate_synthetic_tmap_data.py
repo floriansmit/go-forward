@@ -28,6 +28,15 @@ FACIES = {
 
 SUMMARY_STATS = ("mean", "stdev", "p10", "p25", "p50", "p75", "p90")
 RESERVOIR_QUALITY_COLUMNS = {
+    # DFN-preparation support fields. Their broad synthetic ranges are guided
+    # by the supplied Geocosm P50 examples (quartz cement roughly a few vol %;
+    # total cements roughly five vol %; effective stress tens of MPa).
+    "effective_stress_mpa",
+    "intergranular_porosity_p50",
+    "quartz_cement_p50",
+    "total_cements_p50",
+    "total_carbonate_cmt_p50",
+    "total_clay_cmt_p50",
     "total_porosity_mean",
     "total_porosity_stdev",
     "total_porosity_p10",
@@ -165,9 +174,11 @@ def derived_means(x: float, y: float, z: float, facies: int, row_index: int) -> 
 
     porosity = clamp(phi_base - 0.085 * depth_norm + 0.018 * noise, 0.01, 0.36)
     sec_por = clamp(0.015 + 0.04 * (1.0 - depth_norm) + 0.01 * noise, 0.0, 0.09)
-    quartz_cement = clamp(cement_base + 0.06 * depth_norm + 0.008 * noise, 0.0, 0.18)
-    carbonate = clamp(0.015 + 0.05 * depth_norm + (0.02 if facies in {1, 2, 5, 10, 11} else 0.0), 0.0, 0.18)
-    clay_cement = clamp(0.015 + 0.09 * clay_base + 0.02 * depth_norm, 0.0, 0.12)
+    # Broad synthetic placeholders, kept near the supplied Geocosm P50 order
+    # of magnitude. They are not calibrated T>Map predictions.
+    quartz_cement = clamp(cement_base + 0.035 * depth_norm + 0.006 * noise, 0.0, 0.10)
+    carbonate = clamp(0.005 + 0.012 * depth_norm + (0.012 if facies in {1, 2, 5, 10, 11} else 0.0), 0.0, 0.08)
+    clay_cement = clamp(0.003 + 0.030 * clay_base + 0.008 * depth_norm, 0.0, 0.06)
     matrix = clamp(0.03 + 0.55 * clay_base + 0.02 * depth_norm, 0.0, 0.45)
     total_cements = clamp(quartz_cement + carbonate + clay_cement, 0.0, 0.35)
     igv = clamp(porosity + total_cements + 0.06, 0.05, 0.42)
@@ -317,7 +328,7 @@ def main() -> None:
         "--property-profile",
         choices=("all", "reservoir_quality"),
         default="all",
-        help="Use 'reservoir_quality' to write only total porosity and permeability mean/stdev/P10/P25/P50/P75/P90.",
+        help="Use 'reservoir_quality' to write porosity/permeability statistics plus synthetic effective stress and cement fields needed for DFN preparation.",
     )
     args = parser.parse_args()
 

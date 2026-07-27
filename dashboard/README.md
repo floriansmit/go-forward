@@ -16,8 +16,9 @@ streamlit run dashboard\streamlit_app.py
 
 The dashboard has three tabs:
 
-- **Tab 1:** load source GRDECLs, inspect IJK/XYZ cell-centre views, and run GRDECL-to-point-set builders.
-- **Tab 2:** inspect T>Map-style point sets, generate synthetic T>Map data for MVP testing, and append returned point-set properties to GRDECL.
-- **Tab 3:** inspect augmented GRDECL outputs, including map and cross-section views of appended properties.
+- **1. Prepare models for diagenesis (FSM → FDM):** load source GRDECLs, inspect IJK/XYZ cell-centre views, and create 3D pointsets.
+- **2. Diagenesis modelling data (T>Map):** inspect T>Map-style point sets, generate synthetic T>Map data for MVP testing, and append returned properties to GRDECL.
+- **3. Review diagenesis results:** inspect augmented GRDECL outputs, including map and cross-section views of appended properties.
+- **4. Prepare and run fracture modelling (FDM → FFM / DFN):** assign facies-calibrated geomechanical properties and prepare DFN-ready GRDECLs.
 
 Rob and Linda's real T>Map outputs should replace the synthetic files in the matching `02_*_with_tmap_data` output folder before running the append step.

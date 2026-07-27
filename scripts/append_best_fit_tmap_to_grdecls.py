@@ -29,6 +29,12 @@ GRDECL_KEYWORD_ALIASES = {
     "permeability_p50": "PERM50",
     "permeability_p75": "PERM75",
     "permeability_p90": "PERM90",
+    "effective_stress_mpa": "EFFSTRESS",
+    "intergranular_porosity_p50": "IGPORO50",
+    "quartz_cement_p50": "QUARTZCM50",
+    "total_cements_p50": "TOTCEM50",
+    "total_carbonate_cmt_p50": "CARBCEM50",
+    "total_clay_cmt_p50": "CLAYCEM50",
 }
 
 
@@ -332,7 +338,12 @@ def main() -> None:
         grdecls = [(path, find_pointset_for_grdecl(path, args.pointset_dir, args.vertical_interpolate)) for path in source_grdecls]
 
     for grdecl_path, pointset_path in grdecls:
-        provenance = "_synthetic" if "_tmap_synthetic" in pointset_path.name else ""
+        if "_tmap_synthetic" in pointset_path.name:
+            provenance = "_synthetic"
+        elif "_tmap_inferred_geocosm" in pointset_path.name:
+            provenance = "_inferred_geocosm"
+        else:
+            provenance = ""
         output_name = grdecl_path.with_suffix("").name + f"_with{provenance}_tmap_properties.grdecl"
         output_path = args.output_dir / output_name
         if args.vertical_interpolate:

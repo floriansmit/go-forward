@@ -95,7 +95,9 @@ def write_petrel_standard_grdecls(grdecl_dir: Path, pointset_dir: Path, output_d
         raise ValueError(f"Uber T>Map point sets are missing required column(s): {', '.join(missing_columns)}")
 
     Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
-    for grdecl_path in sorted(grdecl_dir.glob("*.grdecl")):
+    grdecls = sorted(grdecl_dir.glob("*.grdecl"))
+    for realization_index, grdecl_path in enumerate(grdecls, start=1):
+        print(f"PROGRESS {realization_index}/{len(grdecls)} Writing standard properties for {grdecl_path.name}", flush=True)
         centers = grdecl_cell_centers(grdecl_path)
         facies_values = expanded_facies_values(grdecl_path)
         if len(centers) != len(facies_values):

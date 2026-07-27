@@ -67,6 +67,7 @@ def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path) ->
     Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
 
     for realization_index, grdecl_path in enumerate(grdecls, start=1):
+        print(f"PROGRESS {realization_index}/{len(grdecls)} Appending to {grdecl_path.name}", flush=True)
         n_cells = cell_count(grdecl_path)
         attrs_by_cell = attrs_by_realization.get(realization_index, {})
         output_path = output_dir / f"{grdecl_path.with_suffix('').name}_with_union_tmap_properties.grdecl"

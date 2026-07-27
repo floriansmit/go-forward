@@ -7,8 +7,7 @@
     "5": "#b1f6d5",
     "6": "#10a147",
     "8": "#fa0c11",
-    "9": "#dc8927",
-    "10": "#9c755f"
+    "9": "#dc8927"
   },
   "facies_names": {
     "1": "FA1a Offshore",
@@ -18,7 +17,6 @@
     "5": "FA3a Lagoon",
     "6": "FA3b Tidal flats and channels",
     "8": "FA4a Fluvial",
-    "9": "FA4b Fluvial, tidal influenced",
-    "10": "FA5 Floodplain lacustrine"
+    "9": "FA4b Fluvial, tidal influenced"
   }
 }

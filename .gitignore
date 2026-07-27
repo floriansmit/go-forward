@@ -12,3 +12,7 @@ outputs/
 # venv and claude
 .venv/
 CLAUDE.md
+
+# Internal Geocosm-calibrated inference experiment and its local products.
+# This is not part of the public workflow.
+original_data/tmap_example_data/geocosm_inference_experiment/

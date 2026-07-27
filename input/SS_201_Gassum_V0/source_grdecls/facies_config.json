@@ -1,0 +1,44 @@
+{
+  "facies_property": "Facies",
+  "source_grdecl_directory": "C:\\Users\\flori\\OneDrive - GEUS\\02 Projects\\24 GO-Forward\\14 go-forward workflow\\input\\SS_201_Gassum_V0\\source_grdecls",
+  "source_grdecl_files": [
+    "SS_201.5_1xBath_1xThSub_ConS_FSM-FDM-1-Base.grdecl",
+    "SS_201.5_1xBath_1xThSub_ConS_FSM-FDM-2-MinSub.grdecl",
+    "SS_201.5_1xBath_1xThSub_ConS_FSM-FDM-3-MaxSub.grdecl",
+    "SS_201.5_1xBath_1xThSub_ConS_FSM-FDM-4-MinSupply.grdecl",
+    "SS_201.5_1xBath_1xThSub_ConS_FSM-FDM-5-MaxSupply.grdecl"
+  ],
+  "facies_names": {
+    "1": "FA1a Offshore",
+    "2": "FA1b Offshore transition",
+    "3": "FA2a Lower shoreface",
+    "4": "FA2b Middle and upper shoreface",
+    "5": "FA3a Lagoon",
+    "6": "FA3b Tidal flats and channels",
+    "8": "FA4a Fluvial",
+    "9": "FA4b Fluvial, tidal influenced",
+    "10": "FA5 Floodplain, lacustrine"
+  },
+  "facies_colors": {
+    "1": "#4e79a7",
+    "2": "#84abd7",
+    "3": "#e4e4af",
+    "4": "#ecec07",
+    "5": "#76b7b2",
+    "6": "#59a14f",
+    "8": "#d90e0e",
+    "9": "#e0810a",
+    "10": "#9c755f"
+  },
+  "facies_metadata": {
+    "1": { "category": "non_reservoir", "tmap_enabled": false },
+    "2": { "category": "non_reservoir", "tmap_enabled": false },
+    "3": { "category": "reservoir", "tmap_enabled": false },
+    "4": { "category": "reservoir", "tmap_enabled": true },
+    "5": { "category": "reservoir", "tmap_enabled": false },
+    "6": { "category": "reservoir", "tmap_enabled": true },
+    "8": { "category": "reservoir", "tmap_enabled": true },
+    "9": { "category": "non_reservoir", "tmap_enabled": true },
+    "10": { "category": "reservoir", "tmap_enabled": true }
+  }
+}

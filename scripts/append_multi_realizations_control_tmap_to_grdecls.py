@@ -112,6 +112,7 @@ def main() -> None:
     Path(path_for_io(args.output_dir)).mkdir(parents=True, exist_ok=True)
     grdecls = sorted(path for path in args.grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
     for realization_index, grdecl in enumerate(grdecls, start=1):
+        print(f"PROGRESS {realization_index}/{len(grdecls)} Appending to {grdecl.name}", flush=True)
         centers = grdecl_cell_centers(grdecl)
         facies_values = expanded_facies(grdecl, args.property)
         output_path = args.output_dir / f"{grdecl.with_suffix('').name}_with_control_interpolated_tmap_properties.grdecl"

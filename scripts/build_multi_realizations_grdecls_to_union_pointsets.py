@@ -70,7 +70,9 @@ def main() -> None:
 
     all_facies = set()
     realization_data = []
+    progress_total = len(grdecls) * 2
     for realization_index, grdecl in enumerate(grdecls, start=1):
+        print(f"PROGRESS {realization_index}/{progress_total} Scanning {grdecl.name}", flush=True)
         centers = grdecl_cell_centers(grdecl)
         facies_values = expanded_property_values(grdecl, args.property)
         if len(centers) != len(facies_values):
@@ -92,6 +94,10 @@ def main() -> None:
 
         counts = {facies: 0 for facies in handles}
         for realization_index, grdecl, centers, facies_values in realization_data:
+            print(
+                f"PROGRESS {len(grdecls) + realization_index}/{progress_total} Writing {grdecl.name}",
+                flush=True,
+            )
             for cell_index, ((x, y, z), facies) in enumerate(zip(centers, facies_values)):
                 if (facies == 0 and not args.include_zero_facies) or (enabled is not None and facies not in enabled):
                     continue

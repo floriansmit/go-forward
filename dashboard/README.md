@@ -11,8 +11,10 @@ python -m pip install -r requirements-dashboard.txt
 ## Run
 
 ```powershell
-streamlit run dashboard\streamlit_app.py
+python run_dashboard.py
 ```
+
+This uses the Python interpreter that starts the command and does not require a PowerShell execution-policy override.
 
 The dashboard has three tabs:
 

@@ -9,7 +9,9 @@ Choose **one** approach below. The approaches are alternatives, not consecutive 
 3. Use an empty or dedicated set of approach output folders for every new source-data set. Do not mix returned T>Map files from different source sets.
 4. Set the exact facies property keyword below. It is case-sensitive (`Facies` and `FACIES` are different keywords).
 
-Open PowerShell in this workspace and set the variables once:
+The recommended commands below are Python-only and can be run from PowerShell, Command Prompt, VS Code, or another terminal. They do not require `ExecutionPolicy Bypass`. If `python` is not on your PATH, replace it with the full path to your approved Python installation.
+
+For repeated individual commands, set these PowerShell variables once if convenient:
 
 ```powershell
 $Python = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
@@ -28,26 +30,24 @@ The point-set builders create folders when needed. Before starting a fresh sourc
 
 ## Recreate the example outputs in one command
 
-The repository includes `regenerate_synthetic_outputs.ps1` to recreate the synthetic pointset and augmented-GRDECL outputs from the source GRDECLs. It runs the local **synthetic** T>Map generator, so it is suitable for a clean checkout, demonstration, and testing—not as a replacement for an actual T>Map calculation. It intentionally stops before DFN preparation, because Tab 4 requires selected facies formulas, property inputs, and optional fallback settings.
+The repository includes `regenerate_synthetic_outputs.py` to recreate the synthetic pointset and augmented-GRDECL outputs from the source GRDECLs. It runs the local **synthetic** T>Map generator, so it is suitable for a clean checkout, demonstration, and testing—not as a replacement for an actual T>Map calculation. It intentionally stops before DFN preparation, because Tab 4 requires selected facies formulas, property inputs, and optional fallback settings.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1
+```text
+python regenerate_synthetic_outputs.py
 ```
 
 To rebuild just one workflow, for example Control:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 -Approach Control
+```text
+python regenerate_synthetic_outputs.py --approach Control
 ```
 
-The launcher defaults to `SS_201_Gassum_V0`; use `-Project "My_Project"` for another project.
+The launcher defaults to `SS_201_Gassum_V0`; use `--project "My_Project"` for another project. Add `--dry-run` to inspect the commands without changing files.
 
 For a new GRDECL set or a different facies keyword:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 `
-  -SourceDir "C:\path\to\source-grdecls" `
-  -FaciesProperty "FACIES"
+```text
+python regenerate_synthetic_outputs.py --source-dir "C:\path\to\source-grdecls" --facies-property "FACIES"
 ```
 
 ## Facies codes and labels
@@ -56,13 +56,11 @@ The scripts do **not** require a predefined list of codes: every integer value f
 
 For every new DionisosFlow model, first scan its source GRDECLs and create a configuration beside them. The command prompts for the geological meaning, colour, reservoir/non-reservoir category, and T>Map hand-off status of every integer code it finds:
 
-```powershell
-& $Python .\scripts\initialize_facies_config.py `
-  --grdecl-dir $SourceDir `
-  --property $FaciesProperty
+```text
+python scripts\initialize_facies_config.py --grdecl-dir "C:\path\to\source-grdecls" --property "FACIES"
 ```
 
-The resulting `$SourceDir\facies_config.json` is the record for that source set. Pass it as `--facies-config $FaciesConfig` to the Union, Control, and Uber build commands. If a new model deliberately reuses codes with different geological meanings, give it a separate source folder/configuration, or rerun with `--redefine --replace` to re-enter all observed definitions.
+The resulting `facies_config.json` beside the source GRDECLs is the record for that source set. Pass it as `--facies-config <path-to-facies_config.json>` to the Union, Control, and Uber build commands. If a new model deliberately reuses codes with different geological meanings, give it a separate source folder/configuration, or rerun with `--redefine --replace` to re-enter all observed definitions.
 
 The configuration stores display/output labels, dashboard colours, and workflow metadata:
 

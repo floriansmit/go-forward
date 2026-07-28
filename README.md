@@ -37,8 +37,8 @@ The approaches are alternatives; they are not stages that must be run one after 
 │       └── facies_config.json         Project-specific facies definitions
 ├── scripts/                           Reusable command-line workflow scripts
 ├── outputs/<project-name>/            Generated point sets, augmented and DFN-prepared GRDECLs (not versioned)
-├── regenerate_synthetic_outputs.ps1   Rebuild all demonstration outputs locally
-├── run_dashboard.ps1                  Start the dashboard
+├── regenerate_synthetic_outputs.py    Rebuild all demonstration outputs locally
+├── run_dashboard.py                   Start the dashboard
 ├── WORKFLOW.md                        Full command-by-command workflow guide
 └── requirements-dashboard.txt         Dashboard Python dependencies
 ```
@@ -65,22 +65,21 @@ For a new project, Tab 1 accepts an external local source folder. Select **Enter
 
 ## Requirements
 
-- Windows PowerShell
-- Python with `streamlit`, `pandas`, `numpy`, and `plotly` installed
+- Python 3.10+ with `streamlit`, `pandas`, `numpy`, and `plotly` installed
 - Source GRDECL models with `SPECGRID`, `COORD`, `ZCORN`, and an integer facies property
 
 Install the dashboard dependencies if needed:
 
-```powershell
-python -m pip install -r .\requirements-dashboard.txt
+```text
+python -m pip install -r requirements-dashboard.txt
 ```
 
 ## Quick start
 
 ### 1. Start the dashboard
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\run_dashboard.ps1
+```text
+python run_dashboard.py
 ```
 
 Open the local URL printed by Streamlit (normally `http://localhost:8501`).
@@ -89,25 +88,25 @@ Open the local URL printed by Streamlit (normally `http://localhost:8501`).
 
 The supplied launcher rebuilds the Best-fit, Union, Control, and Uber example outputs using synthetic T>Map-style properties:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1
+```text
+python regenerate_synthetic_outputs.py
 ```
 
 To target another project:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 -Project "My_Project"
+```text
+python regenerate_synthetic_outputs.py --project "My_Project"
 ```
 
 To run only one workflow:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 -Approach Control
+```text
+python regenerate_synthetic_outputs.py --approach Control
 ```
 
 ### Regeneration defaults versus dashboard options
 
-`regenerate_synthetic_outputs.ps1` is a reproducible demonstration launcher, not a record of every selection available in the dashboard. It uses every GRDECL in the source folder, creates full-resolution Best-fit pointsets, and uses its `-ControlVerticalSpacing` and `-UberVerticalSpacing` parameters. The dashboard additionally supports selecting models, reduced/reservoir-only Best-fit exports, and interactive sampling previews.
+`regenerate_synthetic_outputs.py` is a reproducible demonstration launcher, not a record of every selection available in the dashboard. It uses every GRDECL in the source folder, creates full-resolution Best-fit pointsets, and uses its `--control-vertical-spacing` and `--uber-vertical-spacing` parameters. The dashboard additionally supports selecting models, reduced/reservoir-only Best-fit exports, and interactive sampling previews. Add `--dry-run` to inspect the commands without writing files.
 
 Before regenerating the **Control** approach, clear or replace its three `outputs\Multi-realization control approach\0*` folders. The current Control workflow creates shared facies-envelope controls and honours enabled T>Map facies; old pointsets or returned synthetic files can otherwise remain in those folders. The launcher should be run with the current source `facies_config.json`; it is intentionally not a substitute for a real T>Map run. It recreates synthetic pointsets and augmented GRDECLs through the diagenesis review stage, but not Tab 4 DFN-prepared GRDECLs because those depend on chosen formulas, property inputs, and optional fallback settings.
 
@@ -115,10 +114,8 @@ Before regenerating the **Control** approach, clear or replace its three `output
 
 Point the launcher to a new folder and provide the exact facies property keyword. The keyword is case-sensitive.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\regenerate_synthetic_outputs.ps1 `
-  -SourceDir "C:\path\to\source-grdecls" `
-  -FaciesProperty "FACIES"
+```text
+python regenerate_synthetic_outputs.py --source-dir "C:\path\to\source-grdecls" --facies-property "FACIES"
 ```
 
 For an actual T>Map project, use the individual build and append commands in [WORKFLOW.md](WORKFLOW.md): send the `01_*` point sets to T>Map, put the returned files in the matching `02_*_with_tmap_data` folder, then run that approach's append script. Do not run the synthetic generator over real returned T>Map files.
@@ -127,13 +124,11 @@ For an actual T>Map project, use the individual build and append commands in [WO
 
 Facies codes are discovered dynamically, so scripts support new integer codes without code changes. For each new DionisosFlow model, create a source-specific configuration by scanning its GRDECLs and entering the meaning of every observed integer:
 
-```powershell
-& $Python .\scripts\initialize_facies_config.py `
-  --grdecl-dir "C:\path\to\source-grdecls" `
-  --property "FACIES"
+```text
+python scripts\initialize_facies_config.py --grdecl-dir "C:\path\to\source-grdecls" --property "FACIES"
 ```
 
-This writes `facies_config.json` beside the source GRDECLs. Pass that file to multi-realization builders with `--facies-config`; `regenerate_synthetic_outputs.ps1` selects it automatically when present. The dashboard can import the same file through **Load facies color JSON**.
+This writes `facies_config.json` beside the source GRDECLs. Pass that file to multi-realization builders with `--facies-config`; `regenerate_synthetic_outputs.py` selects it automatically when present. The dashboard can import the same file through **Load facies color JSON**.
 
 The configuration records labels, colours, and hand-off metadata:
 
@@ -153,7 +148,7 @@ If a different model reuses an existing number with another geological meaning, 
 
 Generated outputs and virtual environments are excluded through `.gitignore`. This keeps the repository practical to clone and avoids GitHub's large-file restrictions.
 
-Generated `outputs/` are deliberately not versioned. They can be recreated from the included example GRDECLs by running `regenerate_synthetic_outputs.ps1`, which produces synthetic sample T>Map data and the corresponding augmented GRDECLs. For a real project, replace the synthetic return files with the actual T>Map results. If source data are confidential or too large for GitHub, store them in the appropriate GEUS/OneDrive location and document their access path separately.
+Generated `outputs/` are deliberately not versioned. They can be recreated from the included example GRDECLs by running `regenerate_synthetic_outputs.py`, which produces synthetic sample T>Map data and the corresponding augmented GRDECLs. For a real project, replace the synthetic return files with the actual T>Map results. If source data are confidential or too large for GitHub, store them in the appropriate GEUS/OneDrive location and document their access path separately.
 
 ## Fracture-modelling stages
 
@@ -163,4 +158,4 @@ Generated `outputs/` are deliberately not versioned. They can be recreated from 
 
 ## More detail
 
-[WORKFLOW.md](WORKFLOW.md) contains exact PowerShell commands for each stage, including real T>Map hand-off rules, input requirements, facies setup, output folders, and Petrel/Eclipse-standard Uber output.
+[WORKFLOW.md](WORKFLOW.md) contains the command-by-command workflow, including real T>Map hand-off rules, input requirements, facies setup, output folders, and Petrel/Eclipse-standard Uber output. The standard dashboard and regeneration routes use Python only and do not require a PowerShell execution-policy override.

@@ -34,8 +34,9 @@ OUTPUT_ROOT = ROOT / "outputs"
 DEFAULT_PROJECT_NAME = "SS_201_Gassum_V0"
 DFN_REFERENCE_DIR = ROOT / "original_data" / "dfn_generator_reference" / "20260728_DFN_Generator_GRDECL"
 # Keep the original reference folder for Michael's template/configuration and
-# demo files, but default new dashboard runs to the MAPAXES-aware 20260807 build.
-DEFAULT_DFN_EXECUTABLE = ROOT / "original_data" / "dfn_generator_reference" / "20260807_DFN_Generator_GRDECL" / "DFMGenerator_GRDECL.exe"
+# demo files. The MAPAXES-aware executable is versioned with the dashboard
+# scripts so a cloned workflow has one clear runnable location.
+DEFAULT_DFN_EXECUTABLE = SCRIPTS / "DFMGenerator_GRDECL.exe"
 DFN_DEMO_GRID = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest.GRDECL"
 DFN_DEMO_CONFIG = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest.txt"
 DFN_DEMO_OUTPUT_DIR = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest_output"

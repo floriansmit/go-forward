@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import math
 import os
 import re
 from collections import defaultdict
@@ -53,8 +54,12 @@ def tokenize_grdecl(path: Path, wanted: set[str]) -> dict[str, list[str]]:
     keyword: str | None = None
     with open(path_for_io(path), "r", encoding="utf-8") as handle:
         for raw in handle:
-            line = raw.strip()
-            if not line or line.startswith("--"):
+            # Eclipse/Petrel comments can appear after a keyword/value on the
+            # same line (for example `SPECGRID -- Generated : Petrel`).
+            # Remove that suffix before tokenising, rather than treating the
+            # comment words as numeric data.
+            line = raw.split("--", 1)[0].strip()
+            if not line:
                 continue
             head = line.split()[0]
             if head in wanted:
@@ -95,9 +100,20 @@ def mapaxes_transform(mapaxes: list[float]):
 def grdecl_cell_centers(path: Path) -> list[tuple[float, float, float]]:
     data = tokenize_grdecl(path, {"SPECGRID", "MAPAXES", "COORD", "ZCORN"})
     nx, ny, nz = (int(float(v)) for v in data["SPECGRID"][:3])
-    coord = [float(v) for v in data["COORD"]]
-    zcorn = [float(v) for v in data["ZCORN"]]
-    mapaxes = [float(v) for v in data["MAPAXES"]]
+
+    def expand_numeric(tokens: list[str]) -> list[float]:
+        values: list[float] = []
+        for token in tokens:
+            if "*" in token:
+                count, value = token.split("*", 1)
+                values.extend([float(value)] * int(float(count)))
+            else:
+                values.append(float(token))
+        return values
+
+    coord = expand_numeric(data["COORD"])
+    zcorn = expand_numeric(data["ZCORN"])
+    mapaxes = expand_numeric(data["MAPAXES"])
 
     expected_coord = (nx + 1) * (ny + 1) * 6
     expected_zcorn = nx * ny * nz * 8
@@ -132,7 +148,7 @@ def read_pointset(path: Path) -> tuple[list[str], list[tuple[float, float, float
     columns: list[str] = []
     rows: list[tuple[float, float, float, list[str]]] = []
     in_header = False
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
         for raw in handle:
             line = raw.strip()
             if not line:
@@ -144,7 +160,7 @@ def read_pointset(path: Path) -> tuple[list[str], list[tuple[float, float, float
                 in_header = False
                 continue
             if in_header:
-                columns.append(line.split(",", 1)[-1])
+                columns.append(line.split(",", 1)[-1].strip().strip('"'))
                 continue
             if line.startswith("#") or line == "VERSION 1":
                 continue
@@ -240,6 +256,120 @@ def append_properties(grdecl_path: Path, pointset_path: Path, output_path: Path)
     return {"cells": len(centers), "points": len(point_rows), "matched": matched, "properties": len(columns), "max_distance": max_distance}
 
 
+def read_tmap_table(path: Path) -> tuple[list[str], list[list[str]]]:
+    """Read a T>Map pointset while retaining its full, arbitrary header."""
+    columns: list[str] = []
+    rows: list[list[str]] = []
+    in_header = False
+    with open(path_for_io(path), "r", encoding="utf-8", errors="ignore") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if line == "BEGIN HEADER":
+                in_header = True
+                continue
+            if line == "END HEADER":
+                in_header = False
+                continue
+            if in_header:
+                columns.append(line.split(",", 1)[-1].strip().strip('"'))
+                continue
+            if not line or line.startswith("#") or line == "VERSION 1":
+                continue
+            values = line.split()
+            if len(values) != len(columns):
+                raise ValueError(f"{path.name} data row has {len(values)} values; expected {len(columns)}")
+            rows.append(values)
+    if columns[:3] != ["X", "Y", "Z"]:
+        raise ValueError(f"{path.name} must begin with X, Y, Z columns")
+    return columns, rows
+
+
+def append_column_interpolated_properties(grdecl_path: Path, pointset_path: Path, output_path: Path) -> None:
+    """Append sparse returned T>Map values by I/J-column vertical interpolation.
+
+    Real returns can omit original cells and may have a different facies label.
+    For this MVP their X/Y/Z locations define the column and vertical sample
+    positions; `Facies` and `point_id` are retained only as return metadata and
+    never overwrite the original GRDECL facies property.
+    """
+    columns, rows = read_tmap_table(pointset_path)
+    excluded = {"x", "y", "z", "facies", "point_id", "cellindex"}
+    property_indices = [(index, name) for index, name in enumerate(columns) if name.lower() not in excluded]
+    if not property_indices:
+        raise ValueError(f"{pointset_path.name} has no T>Map properties to append")
+
+    spec = tokenize_grdecl(grdecl_path, {"SPECGRID"})["SPECGRID"]
+    nx, ny, _ = (int(float(value)) for value in spec[:3])
+    centers = grdecl_cell_centers(grdecl_path)
+    # The I/J centre coordinates are invariant through K. Use 1 m buckets so
+    # decimal rounding in external T>Map exports does not break a match.
+    xy_buckets: dict[tuple[int, int], list[tuple[int, int, float, float]]] = defaultdict(list)
+    for j in range(ny):
+        for i in range(nx):
+            x, y, _ = centers[j * nx + i]
+            xy_buckets[(round(x), round(y))].append((i, j, x, y))
+
+    samples: dict[tuple[int, int], list[tuple[float, list[str]]]] = defaultdict(list)
+    unmatched_xy = 0
+    for row in rows:
+        x, y, z = (float(row[index]) for index in range(3))
+        key = (round(x), round(y))
+        candidates = [
+            candidate
+            for dx in (-1, 0, 1)
+            for dy in (-1, 0, 1)
+            for candidate in xy_buckets.get((key[0] + dx, key[1] + dy), [])
+        ]
+        if not candidates:
+            unmatched_xy += 1
+            continue
+        i, j, cx, cy = min(candidates, key=lambda item: (item[2] - x) ** 2 + (item[3] - y) ** 2)
+        if math.hypot(cx - x, cy - y) > 2.0:
+            unmatched_xy += 1
+            continue
+        samples[(i, j)].append((z, row))
+    if not samples:
+        raise ValueError(f"Could not match any returned T>Map X/Y columns to {grdecl_path.name}")
+    for series in samples.values():
+        series.sort(key=lambda item: item[0])
+
+    def valid_number(value: str) -> float | None:
+        try:
+            number = float(value)
+        except ValueError:
+            return None
+        return number if number not in {-999.0, -77777.0} else None
+
+    Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
+    with open(path_for_io(grdecl_path), "r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
+        out.write(source.read().rstrip() + "\n\n-- Sparse real T>Map properties vertically interpolated within I/J columns.\n")
+        out.write(f"-- Source point set: {pointset_path.name}; {len(rows) - unmatched_xy} of {len(rows)} rows matched by X/Y.\n")
+        for property_index, column in property_indices:
+            values: list[str] = []
+            for cell_index, (_, _, z) in enumerate(centers):
+                i = cell_index % nx
+                j = (cell_index // nx) % ny
+                series = [
+                    (sample_z, value)
+                    for sample_z, sample_row in samples.get((i, j), [])
+                    if (value := valid_number(sample_row[property_index])) is not None
+                ]
+                if not series:
+                    values.append(NO_VALUE)
+                    continue
+                pos = bisect.bisect_left([sample_z for sample_z, _ in series], z)
+                if pos == 0:
+                    value = series[0][1]
+                elif pos == len(series):
+                    value = series[-1][1]
+                else:
+                    z0, value0 = series[pos - 1]
+                    z1, value1 = series[pos]
+                    value = value0 + (z - z0) * (value1 - value0) / (z1 - z0) if z1 != z0 else value0
+                values.append(f"{value:.8g}")
+            write_property(out, grdecl_keyword(column), values)
+
+
 def scenario_token(path: Path) -> str:
     name = path.name
     if name.endswith(".grdecl"):
@@ -272,6 +402,10 @@ def find_pointset_for_grdecl(grdecl_path: Path, pointset_dir: Path, reduced: boo
 
 def append_interpolated_properties(grdecl_path: Path, pointset_path: Path, output_path: Path, facies_property: str) -> None:
     """Append sparse Best-fit results by vertical interpolation within facies/I/J columns."""
+    raw_columns, _ = read_tmap_table(pointset_path)
+    if "CellIndex" not in raw_columns:
+        append_column_interpolated_properties(grdecl_path, pointset_path, output_path)
+        return
     columns, rows = read_pointset(pointset_path)
     if not columns or columns[0] != "CellIndex":
         raise ValueError(f"{pointset_path.name} must retain CellIndex after Facies for reduced Best-fit interpolation")
@@ -291,7 +425,7 @@ def append_interpolated_properties(grdecl_path: Path, pointset_path: Path, outpu
             line = raw.strip()
             if line == "BEGIN HEADER": in_header = True; continue
             if line == "END HEADER": in_header = False; continue
-            if in_header: raw_columns.append(line.split(",", 1)[-1]); continue
+            if in_header: raw_columns.append(line.split(",", 1)[-1].strip().strip('"')); continue
             if not line or line.startswith("#") or line == "VERSION 1": continue
             raw_rows.append(line.split())
     for parts in raw_rows:

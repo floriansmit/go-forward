@@ -39,7 +39,7 @@ def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, 
                     in_header = False
                     continue
                 if in_header:
-                    columns.append(line.split(",", 1)[-1])
+                    columns.append(line.split(",", 1)[-1].strip().strip('"'))
                     continue
                 if line.startswith("#") or line == "VERSION 1":
                     continue

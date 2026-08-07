@@ -152,9 +152,9 @@ Generated `outputs/` are deliberately not versioned. They can be recreated from 
 
 ## Fracture-modelling stages
 
-**Tab 4, Prepare DFN inputs**, reads an augmented GRDECL and writes an approach-specific DFN-prepared GRDECL folder. The output retains geometry, facies, appended T>Map data, and adds Young’s, bulk and shear modulus, Poisson’s ratio, friction, cohesion, tensile strength, fracture energy, and `GEOMECHSOURCE`. The latter identifies T>Map-derived values (`1`) and the optional shale depth-compaction fallback (`2`).
+**Tab 4, Prepare DFN inputs**, reads an augmented GRDECL and writes an approach-specific DFN-prepared GRDECL folder. The output retains geometry, facies, and appended T>Map data, and adds `DFNPorosity`, `DFNEffectiveStress_MPa`, `YoungsModulus_Pa`, `PoissonsRatio`, `FrictionCoefficient`, `FractureEnergy_J_m2`, and `GEOMECHSOURCE`. It can also add `DIPAZIMUTH`: a locally smoothed top-horizon down-dip azimuth at each I/J column, in degrees clockwise from North. `GEOMECHSOURCE` identifies T>Map-derived values (`1`) and the optional depth-compaction fallback (`2`).
 
-**Tab 5, Run DFN Generator**, is currently an integration placeholder. The recommended route is to launch Michael Welch’s updated GRDECL-capable executable as a detached background process, using a versioned run configuration and logs. The exact executable interface, deformation-episode schema, required properties, and output layout must be confirmed before the launcher is enabled. The legacy JointFlow standalone source is a text-configured 2D-grid workflow and is not the intended direct integration target.
+**Tab 5, Run DFN Generator**, writes a GRDECL-capable `DFMGenerator_GRDECL.exe` configuration, optionally creates a structurally valid cropped GRDECL test grid, and launches the executable as a detached background process. Each run retains its copied/cropped input, configuration, manifest, status, log, and output files in the approach-specific next workflow folder: `05_DFN_generator_runs` for Best-fit, Union, and Control, and `06_DFN_generator_runs` for Uber. Property-only DFN-output GRDECLs are displayed against their run-input geometry in the Tab 5 viewer. Start with a cropped grid and a small timestep limit: explicit DFN generation can take substantially longer than the preceding GRDECL workflow.
 
 ## More detail
 

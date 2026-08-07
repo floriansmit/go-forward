@@ -3,13 +3,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
+import re
 from collections import Counter
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = ROOT / "outputs" / "Best-fit approach" / "01_3d_points_from_original_grdecls"
-EXAMPLE = ROOT / "original_data" / "tmap_example_data" / "run4_fluvio_estuarine_facies_8_9"
+# Use the current Geocosm export as the default header template.  Synthetic
+# files remain explicitly marked synthetic in their filename and comments, but
+# their attributes now look like a returned T>Map dataset.
+EXAMPLE = ROOT / "original_data" / "tmap_example_data" / "New Run, export, combined.txt"
 OUTPUT_DIR = ROOT / "outputs" / "Best-fit approach" / "02_3d_points_with_tmap_data"
 
 
@@ -33,24 +37,35 @@ RESERVOIR_QUALITY_COLUMNS = {
     # total cements roughly five vol %; effective stress tens of MPa).
     "effective_stress_mpa",
     "intergranular_porosity_p50",
-    "quartz_cement_p50",
-    "total_cements_p50",
-    "total_carbonate_cmt_p50",
-    "total_clay_cmt_p50",
-    "total_porosity_mean",
-    "total_porosity_stdev",
+    "time_ma",
+    "temperature_c",
+    "burial_depth_m",
+    "overpressure_mpa",
+    "intergranular_porosity_p10",
+    "intergranular_porosity_p90",
+    "q_calc_p10",
+    "q_calc_p50",
+    "q_calc_p90",
+    "igv_p10",
+    "igv_p50",
+    "igv_p90",
     "total_porosity_p10",
-    "total_porosity_p25",
     "total_porosity_p50",
-    "total_porosity_p75",
     "total_porosity_p90",
-    "permeability_mean",
-    "permeability_stdev",
     "permeability_p10",
     "permeability_p25",
     "permeability_p50",
-    "permeability_p75",
     "permeability_p90",
+    "permeability_geomean",
+    "mpor_total_p10",
+    "mpor_total_p50",
+    "mpor_total_p90",
+    "f_calc_p10",
+    "f_calc_p50",
+    "f_calc_p90",
+    "r_calc_p10",
+    "r_calc_p50",
+    "r_calc_p90",
 }
 
 
@@ -65,26 +80,42 @@ def clamp(value: float, lower: float, upper: float) -> float:
 
 
 def tmap_header_columns(example_path: Path) -> list[str]:
-    lines = example_path.read_text(encoding="utf-8").splitlines()
+    try:
+        lines = example_path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        # Geocosm exports can contain a Windows-1252 degree symbol in "°C".
+        lines = example_path.read_text(encoding="cp1252").splitlines()
     start = lines.index("BEGIN HEADER") + 1
     end = lines.index("END HEADER")
     return lines[start:end]
 
 
+def header_attribute_name(column: str) -> str:
+    """Return the visible T>Map attribute label without its data-type prefix."""
+    return column.split(",", 1)[1].strip().strip('"') if "," in column else column.strip().strip('"')
+
+
+def tmap_column_key(column: str) -> str:
+    """Map both legacy and current Geocosm display labels to synthetic fields."""
+    key = re.sub(r"[^a-z0-9]+", "_", header_attribute_name(column).lower()).strip("_")
+    # Display units are part of current Geocosm labels, but not the internal
+    # synthetic-property key (for example `... P50 (vol %)`).
+    return key.removesuffix("_vol").removesuffix("_md")
+
+
 def filter_tmap_columns(columns: list[str], property_profile: str) -> list[str]:
     if property_profile == "all":
-        return columns
+        return columns[:3] + [
+            column for column in columns[3:]
+            if tmap_column_key(column) not in {"facies", "cellindex"}
+        ]
     if property_profile != "reservoir_quality":
         raise ValueError(f"Unknown property profile: {property_profile}")
 
     selected = columns[:3]
     for column in columns[3:]:
-        name = column.split(",", 1)[1]
-        if name in RESERVOIR_QUALITY_COLUMNS:
+        if tmap_column_key(column) in RESERVOIR_QUALITY_COLUMNS:
             selected.append(column)
-    missing = RESERVOIR_QUALITY_COLUMNS.difference(column.split(",", 1)[1] for column in selected[3:])
-    if missing:
-        raise ValueError(f"The example file is missing reservoir-quality columns: {', '.join(sorted(missing))}")
     return selected
 
 
@@ -117,11 +148,18 @@ def write_header(handle, tmap_columns: list[str], passthrough_columns: list[str]
     handle.write("# Number of realizations per point per TCF: 1\n")
     handle.write("VERSION 1\n")
     handle.write("BEGIN HEADER\n")
-    handle.write("X\nY\nZ\nINT,Facies\n")
+    facies_column = next((column for column in tmap_columns if tmap_column_key(column) == "facies"), "INT, Facies")
+    template_columns = {tmap_column_key(column): column for column in tmap_columns}
+    handle.write(f"X\nY\nZ\n{facies_column}\n")
     for column in passthrough_columns:
-        handle.write(f"{column}\n")
+        # Preserve source-column values, but use the current T>Map spelling
+        # (e.g. `INT, CellIndex`) whenever the template supplies it.
+        column_key = tmap_column_key(column)
+        fallback = "INT, CellIndex" if column_key == "cellindex" else column
+        handle.write(f"{template_columns.get(column_key, fallback)}\n")
     for column in tmap_columns[3:]:
-        handle.write(f"{column}\n")
+        if tmap_column_key(column) not in {"facies", "cellindex"}:
+            handle.write(f"{column}\n")
     handle.write("END HEADER\n")
 
 
@@ -227,31 +265,39 @@ def column_value(
     row_index: int,
     means: dict[str, tuple[float, float, float, float]],
 ) -> float:
-    name = column.split(",", 1)[1]
+    name = tmap_column_key(column)
     depth = abs(z)
     noise = stable_noise(name, round(x, 2), round(y, 2), round(z, 2), facies, row_index) - 0.5
-    if name == "temperature_c":
-        return clamp(18.0 + 0.026 * depth + 2.0 * noise, 20.0, 120.0)
-    if name == "burial_depth_m":
-        return depth
-    if name == "effective_stress_mpa":
-        return clamp(0.0145 * depth + 4.0 * noise, 0.0, 60.0)
-    if name == "overpressure_mpa":
-        return clamp(0.3 + 0.0012 * depth + 0.7 * noise, 0.0, 8.0)
-    if name == "permeability_geomean":
+    if name == "time_ma":
+        value = 0.0
+    elif name == "temperature_c":
+        value = clamp(18.0 + 0.026 * depth + 2.0 * noise, 20.0, 120.0)
+    elif name == "burial_depth_m":
+        value = depth
+    elif name == "effective_stress_mpa":
+        value = clamp(0.0145 * depth + 4.0 * noise, 0.0, 60.0)
+    elif name == "overpressure_mpa":
+        value = clamp(0.3 + 0.0012 * depth + 0.7 * noise, 0.0, 8.0)
+    elif name == "permeability_geomean":
         mean, spread, lower, upper = means["permeability"]
-        return clamp(mean * 0.78, lower, upper)
-
-    stat = split_stat(name)
-    if stat is None:
-        return 0.0
-    base_name, suffix = stat
-    if base_name not in means:
-        return 0.0
-    mean, spread, lower, upper = means[base_name]
-    if suffix == "mean":
-        mean = clamp(mean * (1.0 + 0.05 * noise), lower, upper)
-    return stat_value(mean, spread, suffix, lower, upper)
+        value = clamp(mean * 0.78, lower, upper)
+    else:
+        stat = split_stat(name)
+        if stat is None:
+            value = 0.0
+        else:
+            base_name, suffix = stat
+            if base_name not in means:
+                value = 0.0
+            else:
+                mean, spread, lower, upper = means[base_name]
+                if suffix == "mean":
+                    mean = clamp(mean * (1.0 + 0.05 * noise), lower, upper)
+                value = stat_value(mean, spread, suffix, lower, upper)
+    # Current Geocosm output labels volume quantities as vol %.  Synthetic
+    # means are generated as fractions internally, then written in the same
+    # percent convention as the real returned file.
+    return value * 100.0 if "(vol %)" in header_attribute_name(column).lower() else value
 
 
 def write_pointset(source: Path, columns: list[str], output_dir: Path) -> int:
@@ -310,8 +356,8 @@ def write_facies_readme(output_dir: Path, facies_counts: Counter[int]) -> None:
         [
             "",
             "Generated T>Map-style point sets retain the original XYZ and facies code from the source 3D point sets,",
-            "then append the attributes from `original_data/tmap_example_data/run4_fluvio_estuarine_facies_8_9`.",
-            "Porosity, cement, mineral, clay, matrix, and compaction fractions are written as 0-1 fractions.",
+            "then append attributes named after `original_data/tmap_example_data/New Run, export, combined.txt`.",
+            "Volume quantities use the same vol % convention as the Geocosm T>Map export.",
             "Permeability is written in mD and clamped to 0-10000.",
         ]
     )

@@ -262,11 +262,11 @@ Multi-realization control approach/04_DFN_prepared_grdecls_from_control_interpol
 Multi-realization Uber approach/05_DFN_prepared_grdecls_from_uber_lookup/
 ```
 
-For Best-fit, select one augmented model. For Union, Control, or Uber, Tab 4 selects all augmented realizations by default, but allows a subset. Configure facies formulas and property choices in the dashboard before writing. The output adds Young’s, bulk and shear modulus, Poisson’s ratio, friction, cohesion, tensile strength, fracture energy, and `GEOMECHSOURCE`.
+For Best-fit, select one augmented model. For Union, Control, or Uber, Tab 4 selects all augmented realizations by default, but allows a subset. Configure facies formulas and property choices in the dashboard before writing. The output adds `DFNPorosity`, `DFNEffectiveStress_MPa`, `YoungsModulus_Pa`, `PoissonsRatio`, `FrictionCoefficient`, `FractureEnergy_J_m2`, and `GEOMECHSOURCE`. Optionally it adds `DIPAZIMUTH`, calculated from locally smoothed model-top-horizon gradients at each I/J column. It follows broad structural contours, is written in degrees clockwise from North, and is repeated through K.
 
 The optional shale fallback is used only for facies assigned `shale_porosity_stress` where T>Map porosity is absent. It applies a configurable depth-compaction porosity curve and effective-stress gradient. `GEOMECHSOURCE=1` means T>Map-derived; `2` means this fallback was used.
 
-The underlying writer can also be called after a `geomechanics_config.json` has been created in Tab 4:
+Tab 4 stores `geomechanics_config.json` in the approach-specific `04_DFN_prepared_...` folder, alongside the generated DFN-preparation GRDECLs. The underlying writer can also be called directly:
 
 ```powershell
 & $Python .\scripts\assign_geomechanical_properties.py `
@@ -274,13 +274,17 @@ The underlying writer can also be called after a `geomechanics_config.json` has 
   --output-dir "<approach-specific-DFN-folder>" `
   --facies-property $FaciesProperty `
   --porosity-property "POROMEAN" `
-  --config "<folder-with-geomechanics_config.json>" `
+  --config "<approach-specific-DFN-folder>\geomechanics_config.json" `
   --shale-fallback
 ```
 
-## 6. DFM/DFN Generator handoff (dashboard Tab 5)
+## 6. Run the GRDECL-capable DFM/DFN Generator (dashboard Tab 5)
 
-Tab 5 selects DFN-prepared GRDECLs but does not yet launch an executable. The intended implementation is a detached background-process launcher that writes a versioned run configuration, manifest, stdout/stderr logs, and output folder under the relevant approach. This is necessary because production fracture calculations may run for hours.
+Tab 5 selects DFN-prepared GRDECLs, optionally crops them into a valid test grid, writes `DFMGenerator_GRDECL_configuration.txt`, and launches Michael's `DFMGenerator_GRDECL.exe` through a detached Python runner. Runs are stored with the approach that produced their input: `05_DFN_generator_runs/` for Best-fit, Union, and Control, and `06_DFN_generator_runs/` for Uber (whose DFN preparation is already folder 05). Each run folder contains the input GRDECL, configuration, `run_manifest.json`, `run_status.json`, `dfn_generator.log`, and generated DFN outputs.
+
+Tab 4 writes `YoungsModulus_Pa`, the units required by the executable. Select this Pa-valued property in Tab 5 if you want the executable to use the facies-calibrated Young's-modulus grid. `PoissonsRatio`, `FrictionCoefficient`, `FractureEnergy_J_m2`, and the optional degree-valued `DIPAZIMUTH` are also directly selectable; other controls may use the executable defaults.
+
+For initial checks, use the crop option, one or two timesteps, and a small number of intermediate outputs. The dashboard remains responsive while the run proceeds; use **Refresh run status** to inspect the log and available output GRDECLs. Explicit DFN growth can take minutes to hours, especially when many microfractures are exported.
 
 The inspected legacy JointFlow standalone program takes a text configuration file and represents a 2D gridblock model. It does not provide the intended direct GRDECL handoff. Integration should target Michael Welch’s updated compiled executable that can ingest GRDECL geometry/properties and an accompanying configuration file. Confirm its command-line syntax, required GRDECL property names/units, deformation-episode schema, K-layer handling, NoValue rules, and output layout before enabling a launcher.
 

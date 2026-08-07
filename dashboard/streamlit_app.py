@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,13 @@ SCRIPTS = ROOT / "scripts"
 INPUT_ROOT = ROOT / "input"
 OUTPUT_ROOT = ROOT / "outputs"
 DEFAULT_PROJECT_NAME = "SS_201_Gassum_V0"
+DFN_REFERENCE_DIR = ROOT / "original_data" / "dfn_generator_reference" / "20260728_DFN_Generator_GRDECL"
+# Keep the original reference folder for Michael's template/configuration and
+# demo files, but default new dashboard runs to the MAPAXES-aware 20260807 build.
+DEFAULT_DFN_EXECUTABLE = ROOT / "original_data" / "dfn_generator_reference" / "20260807_DFN_Generator_GRDECL" / "DFMGenerator_GRDECL.exe"
+DFN_DEMO_GRID = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest.GRDECL"
+DFN_DEMO_CONFIG = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest.txt"
+DFN_DEMO_OUTPUT_DIR = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest_output"
 
 
 def approaches_for_project(project_output_dir: Path) -> dict[str, dict[str, Path | list[list[str]]]]:
@@ -42,6 +50,7 @@ def approaches_for_project(project_output_dir: Path) -> dict[str, dict[str, Path
             "tmap_dir": root / tmap_folder,
             "augmented_dir": root / augmented_folder,
             "dfn_dir": root / dfn_folder,
+            "dfn_run_dir": root / "05_DFN_generator_runs",
             "build_points": [[build]],
             "generate_tmap": [["scripts/generate_synthetic_tmap_data.py", "--source-dir", str(root / point_folder), "--output-dir", str(root / tmap_folder), "--glob", glob, "--property-profile", "reservoir_quality"]],
             "append": [[command] for command in append],
@@ -55,6 +64,7 @@ def approaches_for_project(project_output_dir: Path) -> dict[str, dict[str, Path
     }
     uber_root = project_output_dir / "Multi-realization Uber approach"
     result["Multi-realization Uber"]["petrel_augmented_dir"] = uber_root / "04_petrel_standard_grdecls_from_uber_lookup"
+    result["Multi-realization Uber"]["dfn_run_dir"] = uber_root / "06_DFN_generator_runs"
     return result
 
 
@@ -436,12 +446,16 @@ def plot_map_with_cells(
                 )
     else:
         # Continuous color scale
+        df = df.loc[valid_continuous_mask(df[color_column])].copy()
+        if df.empty:
+            st.warning("No valid values are available for this property.")
+            return
         numeric_values = pd.to_numeric(df[color_column], errors="coerce")
         logarithmic = "perm" in color_column.lower()
         if logarithmic:
             numeric_values = np.log10(numeric_values.clip(lower=1e-12))
         fixed_poro_scale = "porosity" in color_column.lower() or color_column.lower().startswith("poro")
-        low, high = (0.0, 0.4) if fixed_poro_scale else (float(numeric_values.min()), float(numeric_values.max()))
+        low, high = porosity_display_limits(numeric_values) if fixed_poro_scale else (float(numeric_values.min()), float(numeric_values.max()))
         if not np.isfinite(low) or not np.isfinite(high) or np.isclose(low, high):
             low, high = 0.0, 1.0
         for _, row in df.iterrows():
@@ -468,7 +482,7 @@ def plot_map_with_cells(
         showlegend=True,
     )
     fig.update_xaxes(scaleanchor="y", scaleratio=1)
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
 def plot_section_with_cells(
@@ -564,14 +578,21 @@ def plot_section_with_cells(
             subset = work[np.round(values).astype(int) == category]
             add_cells(subset, f"Facies {category}", colors.get(category, default_facies_color(category)), True)
     else:
+        work = work.loc[valid_continuous_mask(work[color_column])].copy()
+        if work.empty:
+            st.warning("No valid values are available for this property in this section.")
+            return
+        values = pd.to_numeric(work[color_column], errors="coerce").to_numpy()
+        if "perm" in color_column.lower():
+            values = np.log10(np.clip(values, 1e-12, None))
         finite = values[np.isfinite(values)]
         low, high = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 1.0)
         if np.isclose(low, high):
             bins = np.zeros(len(work), dtype=int)
         else:
-            bins = np.clip(((values - low) / (high - low) * 15).astype(int), 0, 15)
+            bins = np.clip(((values - low) / (high - low) * 127).astype(int), 0, 127)
         for bucket in np.unique(bins):
-            fraction = (int(bucket) + 0.5) / 16
+            fraction = (int(bucket) + 0.5) / 128
             color = px.colors.sample_colorscale("Viridis", fraction)[0]
             add_cells(work[bins == bucket], color_column, color, False)
 
@@ -581,7 +602,7 @@ def plot_section_with_cells(
         xaxis_title=axis_label, yaxis_title="Z (depth)",
     )
     fig.update_yaxes(autorange="reversed")
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
 st.set_page_config(page_title="GO-Forward GRDECL/T>Map", layout="wide")
@@ -641,6 +662,640 @@ def display_path(path: Path) -> str:
         return str(path.relative_to(ROOT))
     except ValueError:
         return str(path)
+
+
+def dfn_property_directive(keyword: str, property_name: str | None, default_value: str) -> list[str]:
+    """Use a GRDECL property when selected, otherwise retain Michael's default."""
+    executable_aliases = {
+        "YOUNGSMODULUS_PA": "YOUNGSMODPA",
+        "FRACTUREENERGY_J_M2": "FRACTUREENERGY",
+    }
+    selected = executable_aliases.get(str(property_name).upper(), property_name)
+    return [f"{keyword}Property {selected}"] if selected and selected != "Use default" else [f"Default{keyword} {default_value}"]
+
+
+def property_option_index(options: list[str], preferred: str) -> int:
+    """Find a GRDECL property option without assuming its keyword casing."""
+    return next((index for index, option in enumerate(options) if option.upper() == preferred.upper()), 0)
+
+
+def initialize_tab5_property_defaults(properties: list[str]) -> None:
+    """Choose available DFN fields when the selected input GRDECL changes."""
+    marker = "tab5_property_defaults_v3"
+    signature = tuple(sorted(name.upper() for name in properties))
+    if st.session_state.get(marker) == signature:
+        return
+    options = ["Use default", *properties]
+    for state_key, preferred in (
+        ("tab5_azimuth_property", "DIPAZIMUTH"),
+        ("tab5_young_prop", "YoungsModulus_Pa"),
+        ("tab5_poisson_prop", "PoissonsRatio"),
+        ("tab5_porosity_prop", "DFNPorosity"),
+        ("tab5_friction_prop", "FrictionCoefficient"),
+        ("tab5_energy_prop", "FractureEnergy_J_m2"),
+    ):
+        if st.session_state.get(state_key, "Use default") == "Use default":
+            index = property_option_index(options, preferred)
+            if index:
+                st.session_state[state_key] = options[index]
+    st.session_state[marker] = signature
+
+
+def read_dfn_configuration(path: Path) -> dict[str, str]:
+    """Read active one-value entries from a standalone DFM configuration."""
+    settings: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("%"):
+            continue
+        key, _, value = line.partition(" ")
+        if value.strip():
+            settings[key] = value.strip()
+    return settings
+
+
+def load_dfn_configuration_into_controls(path: Path, properties: list[str]) -> None:
+    """Populate the Tab 5 controls from Michael's text configuration."""
+    values = read_dfn_configuration(path)
+
+    def number(name: str, state_key: str, scale: float = 1.0) -> None:
+        if name in values:
+            try:
+                st.session_state[state_key] = float(values[name]) * scale
+            except ValueError:
+                pass
+
+    def boolean(name: str, state_key: str) -> None:
+        if name in values and values[name].lower() in {"true", "false"}:
+            st.session_state[state_key] = values[name].lower() == "true"
+
+    def choice(name: str, state_key: str, allowed: set[str] | None = None) -> None:
+        if name in values and (allowed is None or values[name] in allowed):
+            st.session_state[state_key] = values[name]
+
+    for config_name, state_key, scale in (
+        ("HorizontalUpscalingFactor", "tab5_hup", 1.0),
+        ("VerticalUpscalingFactor", "tab5_vup", 1.0),
+        ("DefaultEhminAzi", "tab5_azimuth", 180.0 / np.pi),
+        ("DefaultEhminRate", "tab5_ehmin", 1.0),
+        ("DefaultEhmaxRate", "tab5_ehmax", 1.0),
+        ("DeformationEpisodeDuration", "tab5_duration", 1.0),
+        ("DefaultAppliedOverpressureRate", "tab5_overpressure", 1.0 / 1e5),
+        ("DefaultAppliedTemperatureChange", "tab5_temperature", 1.0),
+        ("DefaultAppliedUpliftRate", "tab5_uplift", 1.0),
+        ("StressArchingFactor", "tab5_arching", 1.0),
+        ("DefaultYoungsMod", "tab5_young_default", 1.0 / 1e9),
+        ("DefaultPoissonsRatio", "tab5_poisson_default", 1.0),
+        ("DefaultPorosity", "tab5_porosity_default", 1.0),
+        ("DefaultFrictionCoefficient", "tab5_friction_default", 1.0),
+        ("DefaultCrackSurfaceEnergy", "tab5_energy_default", 1.0),
+        ("DefaultBiotCoefficient", "tab5_biot", 1.0),
+        ("DefaultThermalExpansionCoefficient", "tab5_thermal", 1.0),
+        ("DefaultInitialMicrofractureDensity", "tab5_micro_density", 1.0),
+        ("DefaultInitialMicrofractureSizeDistribution", "tab5_micro_size", 1.0),
+        ("DefaultInitialMicrofractureMedianRadius", "tab5_micro_radius", 1.0),
+        ("DefaultSubcriticalPropIndex", "tab5_subcritical", 1.0),
+        ("CriticalPropagationRate", "tab5_critical_rate", 1.0),
+        ("DefaultDepthAtDeformation", "tab5_depth_deformation", 1.0),
+        ("MeanOverlyingSedimentDensity", "tab5_overburden", 1.0),
+        ("FluidDensity", "tab5_fluid_density", 1.0),
+        ("InitialOverpressure", "tab5_initial_overpressure", 1.0 / 1e5),
+        ("GeothermalGradient", "tab5_gradient", 1000.0),
+        ("InitialStressRelaxation", "tab5_initial_relaxation", 1.0),
+        ("NoIntermediateOutputs", "tab5_intermediates", 1.0),
+        ("Mode1HMin_UniformAperture", "tab5_aperture_value", 1.0),
+        ("NoLayerBoundFractureSets", "tab5_fracture_sets", 1.0),
+        ("MaxTimesteps", "tab5_max_timesteps", 1.0),
+        ("MaxTimestepDuration", "tab5_max_timestep_duration", 1.0),
+        ("MaxTimestepMFP33Increase", "tab5_mfp33", 1.0),
+        ("No_r_bins", "tab5_radius_bins", 1.0),
+        ("MinimumClearZoneVolume", "tab5_clear_zone", 1.0),
+        ("MaxConsistencyAngle", "tab5_consistency", 180.0 / np.pi),
+        ("MinimumLayerThickness", "tab5_layer_thickness", 1.0),
+        ("MaxNoFracturePatches", "tab5_patches", 1.0),
+        ("MinExplicitMicrofractureRadius", "tab5_explicit_radius", 1.0),
+        ("Number_uF_Points", "tab5_micro_corners", 1.0),
+        ("NoUnconfinedFractureStrikeSets", "tab5_ucf_strike", 1.0),
+        ("NoUnconfinedFractureDipSets", "tab5_ucf_dip", 1.0),
+    ):
+        number(config_name, state_key, scale)
+    # The paired example originates from the earlier standalone configuration
+    # naming, while Michael's current template uses the first name below.
+    if "NoLayerBoundFractureSets" not in values:
+        number("NoFractureSets", "tab5_fracture_sets")
+    for config_name, state_key in (
+        ("AverageMechanicalPropertyData", "tab5_average_mech"),
+        ("AverageStressStrainData", "tab5_average_stress"),
+        ("GenerateExplicitDFN", "tab5_explicit"),
+        ("WriteDFNFiles", "tab5_ascii"),
+        ("WriteFABFiles", "tab5_fab"),
+        ("WriteImplicitDataFiles", "tab5_implicit"),
+        ("OutputFractureSets", "tab5_sets"),
+        ("OutputFractureSetData", "tab5_sets"),
+        ("OutputFracturePorosity", "tab5_porosity_out"),
+        ("OutputFracturePermeabilityTensor", "tab5_perm_out"),
+        ("PopulateEmptyGridblocks", "tab5_empty"),
+        ("CropAtBoundary", "tab5_crop_boundary"),
+        ("LinkStressShadows", "tab5_relays"),
+        ("Mode1Only", "tab5_mode1"),
+        ("Mode2Only", "tab5_mode2"),
+        ("FilterByProperty", "tab5_filter"),
+    ):
+        boolean(config_name, state_key)
+    choice("ModelTimeUnits", "tab5_time_units", {"ma", "year", "second"})
+    choice("InitialMicrofractureDistributionFunction", "tab5_micro_distribution", {"PowerLaw", "Exponential", "LogNormal"})
+    choice("StressDistributionScenario", "tab5_stress_distribution", {"StressShadow", "EvenlyDistributedStress"})
+    choice("IntermediateOutputIntervalControl", "tab5_interval", {"EqualTime", "EqualArea", "SpecifiedTime"})
+    choice("FractureApertureControl", "tab5_aperture", {"Uniform", "SizeDependent", "Dynamic", "BartonBandis"})
+    choice("SearchAdjacentGridblocks", "tab5_search", {"Automatic", "All", "None"})
+    available = {name.upper(): name for name in properties}
+    for config_name, state_key in (
+        ("EhminAziProperty", "tab5_azimuth_property"),
+        ("YoungsModProperty", "tab5_young_prop"),
+        ("PoissonsRatioProperty", "tab5_poisson_prop"),
+        ("PorosityProperty", "tab5_porosity_prop"),
+        ("FrictionCoefficientProperty", "tab5_friction_prop"),
+        ("CrackSurfaceEnergyProperty", "tab5_energy_prop"),
+    ):
+        selected = available.get(values.get(config_name, "").upper())
+        # Retain the local GRDECL mapping when Michael's reference config
+        # contains a placeholder or a property absent from this model.
+        if selected:
+            st.session_state[state_key] = selected
+
+
+def dfn_config_text(model_name: str, grid_name: str, settings: dict[str, object]) -> str:
+    """Create the active subset of Michael's GRDECL executable configuration."""
+    def truth(key: str) -> str:
+        return "true" if settings.get(key) else "false"
+
+    lines = [
+        "% Generated by the GO-Forward dashboard from the DFM Generator settings.",
+        f"ModelName {model_name}",
+        f"GridFileName {grid_name}",
+        "StartColumnI -1", "EndColumnI -1", "StartRowJ -1", "EndRowJ -1", "TopLayerK -1", "BottomLayerK -1",
+        f"HorizontalUpscalingFactor {settings['horizontal_upscale']}",
+        f"VerticalUpscalingFactor {settings['vertical_upscale']}",
+        f"ModelTimeUnits {settings['time_units']}",
+        f"DefaultEhminRate {settings['ehmin_rate']}",
+        f"DefaultEhmaxRate {settings['ehmax_rate']}",
+        f"DefaultAppliedOverpressureRate {float(settings['overpressure_bar_ma']) * 1e5:.8g}",
+        f"DefaultAppliedTemperatureChange {settings['temperature_change_k_ma']}",
+        f"DefaultAppliedUpliftRate {settings['uplift_rate_m_ma']}",
+        f"StressArchingFactor {settings['stress_arching_factor']}",
+        f"DeformationEpisodeDuration {settings['episode_duration']}",
+    ]
+    # The dashboard stores DIPAZIMUTH in degrees clockwise from North for
+    # inspection. The temporary DFN handoff converts that property to radians;
+    # scalar configuration values are likewise written in radians.
+    lines.append(f"DefaultEhminAzi {np.deg2rad(float(settings['ehmin_azimuth_deg'])):.8g}")
+    if settings.get("ehmin_azimuth_property") and settings.get("ehmin_azimuth_property") != "Use default":
+        lines.append(f"EhminAziProperty {settings['ehmin_azimuth_property']}")
+    lines += dfn_property_directive("YoungsMod", settings.get("youngs_property"), f"{float(settings['youngs_default_gpa']) * 1e9:.8g}")
+    lines += dfn_property_directive("PoissonsRatio", settings.get("poisson_property"), str(settings["poisson_default"]))
+    lines += dfn_property_directive("Porosity", settings.get("porosity_property"), str(settings["porosity_default"]))
+    lines += dfn_property_directive("FrictionCoefficient", settings.get("friction_property"), str(settings["friction_default"]))
+    lines += dfn_property_directive("CrackSurfaceEnergy", settings.get("fracture_energy_property"), str(settings["fracture_energy_default"]))
+    lines += [
+        f"DefaultBiotCoefficient {settings['biot_default']}",
+        f"DefaultThermalExpansionCoefficient {settings['thermal_expansion_default']}",
+        f"DefaultRockStrainRelaxation {settings['rock_relaxation']}",
+        f"DefaultFractureRelaxation {settings['fracture_relaxation']}",
+        f"InitialMicrofractureDistributionFunction {settings['microfracture_distribution']}",
+        f"DefaultInitialMicrofractureDensity {settings['microfracture_density']}",
+        f"DefaultInitialMicrofractureSizeDistribution {settings['microfracture_size_distribution']}",
+        f"DefaultInitialMicrofractureMedianRadius {settings['microfracture_median_radius']}",
+        f"DefaultSubcriticalPropIndex {settings['subcritical_index']}",
+        f"CriticalPropagationRate {settings['critical_rate']}",
+        f"AverageMechanicalPropertyData {truth('average_mechanical')}",
+        f"StressDistributionScenario {settings['stress_distribution']}",
+        f"DefaultDepthAtDeformation {settings['depth_at_deformation']}",
+        f"MeanOverlyingSedimentDensity {settings['overburden_density']}",
+        f"FluidDensity {settings['fluid_density']}",
+        f"InitialOverpressure {float(settings['initial_overpressure_bar']) * 1e5:.8g}",
+        f"GeothermalGradient {float(settings['geothermal_gradient_c_km']) / 1000:.8g}",
+        f"InitialStressRelaxation {settings['initial_stress_relaxation']}",
+        f"AverageStressStrainData {truth('average_stress')}",
+        f"WriteImplicitDataFiles {truth('write_implicit_files')}",
+        f"WriteDFNFiles {truth('write_dfn_ascii')}",
+        "OutputDFNFileType ASCII",
+        "WriteGRDECLFiles true",
+        "IncludeGridGeometryInGRDECLFiles false",
+        f"WriteFABFiles {truth('write_fab')}",
+        f"NoIntermediateOutputs {settings['intermediate_outputs']}",
+        f"IntermediateOutputIntervalControl {settings['intermediate_control']}",
+        f"OutputFractureSets {truth('output_fracture_sets')}",
+        f"OutputFracturePorosity {truth('output_fracture_porosity')}",
+        f"OutputFracturePermeabilityTensor {truth('output_fracture_permeability')}",
+        f"PopulateEmptyGridblocks {truth('populate_empty')}",
+        f"FractureApertureControl {settings['aperture_control']}",
+        f"Mode1HMin_UniformAperture {settings['uniform_aperture_m']}",
+        f"Mode2HMin_UniformAperture {settings['uniform_aperture_m']}",
+        f"Mode1HMax_UniformAperture {settings['uniform_aperture_m']}",
+        f"Mode2HMax_UniformAperture {settings['uniform_aperture_m']}",
+        f"NoLayerBoundFractureSets {settings['fracture_sets']}",
+        f"Mode1Only {truth('mode1_only')}",
+        f"Mode2Only {truth('mode2_only')}",
+        f"MaxTimestepDuration {settings['max_timestep_duration']}",
+        f"MaxTimestepMFP33Increase {settings['max_mfp33_increase']}",
+        f"No_r_bins {settings['radius_bins']}",
+        f"MinimumClearZoneVolume {settings['minimum_clear_zone']}",
+        f"MaxTimesteps {settings['max_timesteps']}",
+        f"GenerateExplicitDFN {truth('generate_explicit')}",
+        f"CropAtBoundary {truth('crop_boundary')}",
+        f"LinkStressShadows {truth('link_stress_shadows')}",
+        f"MaxConsistencyAngle {np.deg2rad(float(settings['max_consistency_angle_deg'])):.8g}",
+        f"MinimumLayerThickness {settings['minimum_layer_thickness']}",
+        f"MaxNoFracturePatches {settings['max_fracture_patches']}",
+        f"SearchAdjacentGridblocks {settings['search_adjacent']}",
+        f"MinExplicitMicrofractureRadius {settings['minimum_explicit_microfracture_radius']}",
+        f"Number_uF_Points {settings['microfracture_cornerpoints']}",
+        f"NoUnconfinedFractureStrikeSets {settings['unconfined_strike_sets']}",
+        f"NoUnconfinedFractureDipSets {settings['unconfined_dip_sets']}",
+        f"FilterByProperty {truth('filter_by_property')}",
+        # Active reference controls from Michael's supplied configuration
+        # that do not yet have their own dashboard widgets.
+        "ProbabilisticFractureNucleationLimit -1",
+        "FractureNucleationPosition -1",
+        "PropagateFracturesInNucleationOrder true",
+        "CheckAlluFStressShadows Automatic",
+        "Active_TotalMFP30TerminationRatio -1",
+        "Current_HistoricMFP33TerminationRatio -1",
+        "MinImplicitMicrofractureRadius -1",
+        "No_l_indexPoints 20",
+        "OutputPopulationDistribution true",
+        "AllowReverseFractures false",
+        "MaxHMinLength 0",
+        "MaxHMaxLength 0",
+    ]
+    if settings.get("filter_by_property") and settings.get("filter_property"):
+        lines += [
+            f"PropertyToFilter {settings['filter_property']}",
+            f"FilterByPropertyMinCutoff {settings['filter_min']}",
+            f"FilterByPropertyMaxCutoff {settings['filter_max']}",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def dfn_run_status(run_dir: Path) -> dict[str, object]:
+    path = run_dir / "run_status.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def stop_dfn_run(run_dir: Path) -> tuple[bool, str]:
+    """Stop a dashboard-launched DFN runner and its executable child process."""
+    status_path = run_dir / "run_status.json"
+    status = dfn_run_status(run_dir)
+    launcher_pid = status.get("launcher_pid")
+    if not isinstance(launcher_pid, int) or launcher_pid <= 0:
+        return False, "This run has no active dashboard launcher process to stop."
+    try:
+        result = subprocess.run(
+            ["taskkill", "/PID", str(launcher_pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return False, f"Could not request process termination: {exc}"
+    status.update(
+        {
+            "status": "stopped",
+            "stage": "Stopped by user from the dashboard",
+            "stop_requested_utc": datetime.now(timezone.utc).isoformat(),
+            "completed_utc": datetime.now(timezone.utc).isoformat(),
+            "taskkill_returncode": result.returncode,
+        }
+    )
+    status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+    if result.returncode == 0:
+        return True, "The DFN launcher and its executable child process were stopped."
+    detail = (result.stderr or result.stdout or "The process was already gone.").strip()
+    return False, detail
+
+
+def delete_dfn_run(run_dir: Path) -> tuple[bool, str]:
+    """Remove one completed, failed, or user-stopped dashboard run folder."""
+    if not run_dir.exists():
+        return False, "The selected run folder no longer exists."
+    state = str(dfn_run_status(run_dir).get("status", "unknown")).lower()
+    if state in {"queued", "preparing", "running"}:
+        return False, "Stop the active DFN run before deleting its folder."
+    try:
+        shutil.rmtree(run_dir)
+    except OSError as exc:
+        return False, f"Could not delete the run folder: {exc}"
+    return True, f"Removed {run_dir.name} and its input, log, configuration, and output files."
+
+
+def dfn_elapsed_seconds(status: dict[str, object]) -> int | None:
+    """Format elapsed wall-clock time from the runner's UTC status fields."""
+    started = status.get("started_utc")
+    if not isinstance(started, str):
+        return None
+    try:
+        start = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        finished = status.get("completed_utc")
+        end = datetime.fromisoformat(finished.replace("Z", "+00:00")) if isinstance(finished, str) else datetime.now(timezone.utc)
+    except ValueError:
+        return None
+    return max(0, int((end - start).total_seconds()))
+
+
+def dfn_duration_text(seconds: int) -> str:
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:d}:{seconds:02d}"
+
+
+def dfn_elapsed_text(status: dict[str, object]) -> str | None:
+    seconds = dfn_elapsed_seconds(status)
+    return dfn_duration_text(seconds) if seconds is not None else None
+
+
+def dfn_run_label(run_dir: Path) -> str:
+    """Human-readable source and run-size label for the run selectors."""
+    manifest_path = run_dir / "run_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    source = Path(str(manifest.get("source_grdecl", "unknown model"))).stem
+    cells = manifest.get("run_cells")
+    scope = "cropped" if manifest.get("cropped") else "full model"
+    cell_label = f"{int(cells):,} cells" if isinstance(cells, (int, float)) else "cell count unknown"
+    return f"{source} · {scope}, {cell_label} · {run_dir.name}"
+
+
+def dfn_run_name(source_grdecl: Path, cropped: bool, cells: int, sequence: int) -> str:
+    """Keep run folders below Windows path limits; full source names stay in the manifest."""
+    cell_tag = f"{cells // 1000}k" if cells >= 1000 and cells % 1000 == 0 else str(cells)
+    sampling = f"c{cell_tag}" if cropped else f"f{cell_tag}"
+    # The executable repeats this ID in its output directory and FAB names.
+    # Keep it at ~21 characters so the longest FAB path stays below 260.
+    # Source-model identity remains in the manifest and selector label.
+    return f"r_{time.strftime('%y%m%d_%H%M%S')}_{sampling}_{sequence}"
+
+
+def latest_dfn_runtime(run_root: Path, source_grdecl: Path) -> tuple[int, int] | None:
+    """Return elapsed seconds and grid cells from the latest comparable completed run."""
+    if not run_root.exists():
+        return None
+    candidates: list[tuple[str, int, int]] = []
+    source_text = str(source_grdecl)
+    for run_dir in run_root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        status = dfn_run_status(run_dir)
+        if status.get("status") != "completed":
+            continue
+        manifest_path = run_dir / "run_manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        cells = manifest.get("run_cells")
+        seconds = dfn_elapsed_seconds(status)
+        if manifest.get("source_grdecl") == source_text and isinstance(cells, (int, float)) and cells > 0 and seconds is not None:
+            candidates.append((str(status.get("completed_utc", "")), int(seconds), int(cells)))
+    if not candidates:
+        return None
+    _, seconds, cells = max(candidates, key=lambda item: item[0])
+    return seconds, cells
+
+
+@st.fragment
+def dfn_crop_controls(dims: tuple[int, int, int], source_path_text: str, run_root_text: str) -> tuple[bool, tuple[int, int], tuple[int, int], tuple[int, int], int]:
+    """Keep crop-range changes local to the cell-count preview."""
+    crop_run = st.checkbox("Create a cropped test-grid copy for this run", value=True, key="tab5_crop")
+    if crop_run:
+        st.caption("The crop is a Petrel-style standalone DFN hand-off: geometry, active/layer fields and required DFN properties are reduced together. Use this for configuration and runtime checks before full-scale execution.")
+        crop_columns = st.columns(3)
+        crop_i = crop_columns[0].slider("I range", 1, dims[0], (1, min(dims[0], 5)), key="tab5_crop_i")
+        crop_j = crop_columns[1].slider("J range", 1, dims[1], (1, min(dims[1], 5)), key="tab5_crop_j")
+        crop_k = crop_columns[2].slider("K range", 1, dims[2], (1, min(dims[2], 4)), key="tab5_crop_k")
+        cells = (crop_i[1] - crop_i[0] + 1) * (crop_j[1] - crop_j[0] + 1) * (crop_k[1] - crop_k[0] + 1)
+        cell_metric, estimate_metric = st.columns(2)
+        cell_metric.metric("Cropped test cells", f"{cells:,}")
+        reference = latest_dfn_runtime(Path(run_root_text), Path(source_path_text))
+        if reference:
+            previous_seconds, previous_cells = reference
+            estimate_metric.metric("Estimated run time", f"~{dfn_duration_text(int(previous_seconds * cells / previous_cells))}")
+            st.caption(f"Estimate scaled from the most recent completed {previous_cells:,}-cell run of this GRDECL. Actual DFN runtime can vary with fracture growth.")
+        else:
+            estimate_metric.metric("Estimated run time", "Run a crop first")
+        return True, crop_i, crop_j, crop_k, cells
+    crop_i, crop_j, crop_k = (1, dims[0]), (1, dims[1]), (1, dims[2])
+    cells = int(np.prod(dims))
+    st.caption("The full model is written as a Petrel-style standalone DFN hand-off before launch. This adds the spatial-reference fields required by the executable without changing cell geometry or DFN values.")
+    st.metric("Full-model cells", f"{cells:,}")
+    return False, crop_i, crop_j, crop_k, cells
+
+
+@st.fragment(run_every=5)
+def dfn_live_status_panel(run_dir_text: str) -> None:
+    """Refresh the small run-status area without rerunning the heavy viewers."""
+    run_dir = Path(run_dir_text)
+    status = dfn_run_status(run_dir)
+    state = str(status.get("status", "unknown")).lower()
+    elapsed = dfn_elapsed_text(status)
+    stage = str(status.get("stage", "Waiting for the launcher…"))
+    if state in {"queued", "preparing", "running"}:
+        st.info(f"**DFN Generator is running** · elapsed {elapsed or 'starting…'}\n\nCurrent step: {stage}\n\nThis panel refreshes every 5 seconds; you can keep working elsewhere in the dashboard.")
+        if st.button("Stop this DFN run", key=f"stop_dfn_{run_dir.name}", type="secondary"):
+            stopped, message = stop_dfn_run(run_dir)
+            if stopped:
+                st.success(message)
+            else:
+                st.warning(f"Stop request could not be confirmed: {message}")
+            st.rerun(scope="fragment")
+    elif state == "completed":
+        st.success(f"**DFN run completed** · total time {elapsed or 'unknown'}")
+    elif state == "failed":
+        st.error(f"**DFN run failed** · stopped after {elapsed or 'unknown'}\n\nLast step: {stage}")
+    elif state == "stopped":
+        st.warning(f"**DFN run stopped by user** · elapsed {elapsed or 'unknown'}\n\nLast step: {stage}")
+    else:
+        st.warning("No live status has been written yet. The launch may still be starting.")
+    manifest_path = run_dir / "run_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    run_cells = manifest.get("run_cells")
+    source_cells = manifest.get("source_cells")
+    if isinstance(run_cells, (int, float)):
+        source_text = f" of {int(source_cells):,} source-model cells" if isinstance(source_cells, (int, float)) else ""
+        st.caption(f"Run grid: {int(run_cells):,} cells{source_text}.")
+    elapsed_seconds = dfn_elapsed_seconds(status)
+    if manifest.get("cropped") and state in {"completed", "failed"} and elapsed_seconds is not None and isinstance(run_cells, (int, float)) and isinstance(source_cells, (int, float)) and run_cells > 0:
+        estimate = int(elapsed_seconds * float(source_cells) / float(run_cells))
+        st.caption(f"First-order full-model estimate: ~{dfn_duration_text(estimate)} from this {int(run_cells):,}-cell crop ({float(run_cells) / float(source_cells):.1%} of the model). DFN runtime is not perfectly linear, so use this as an order-of-magnitude guide only.")
+    with st.expander("Run details", expanded=state in {"failed", "unknown"}):
+        st.json(status or {"status": "unknown"}, expanded=False)
+    log_path = run_dir / "dfn_generator.log"
+    if log_path.exists():
+        st.caption("Live executable log (latest 30 lines)")
+        st.code("\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]), language="text")
+
+
+@st.cache_data(show_spinner=False)
+def dfn_result_dataframe(input_path_text: str, result_path_text: str, max_rows: int) -> pd.DataFrame:
+    """Attach property-only DFM output to the geometry of its run input GRDECL."""
+    input_path, result_path = Path(input_path_text), Path(result_path_text)
+    nx, ny, nz = grdecl_dimensions(input_path_text)
+    centres = grdecl_cell_centers(input_path)
+    df = pd.DataFrame(centres, columns=["X", "Y", "Z"])
+    cell_index = np.arange(len(df))
+    df["CellIndex"] = cell_index
+    df["I"] = cell_index % nx + 1
+    df["J"] = (cell_index // nx) % ny + 1
+    df["K"] = cell_index // (nx * ny) + 1
+    result_properties: dict[str, pd.Series | list[str]] = {}
+    for keyword in keyword_candidates(result_path):
+        try:
+            values = expand_values(tokenize_grdecl(result_path, {keyword})[keyword])
+        except Exception:
+            continue
+        if len(values) != len(df):
+            continue
+        numeric = pd.to_numeric(pd.Series(values), errors="coerce")
+        result_properties[keyword] = numeric if numeric.notna().any() else values
+    if result_properties:
+        df = pd.concat([df, pd.DataFrame(result_properties, index=df.index)], axis=1)
+    if len(df) > max_rows:
+        return df.sample(max_rows, random_state=7).sort_values(["K", "J", "I"])
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def read_fab_fractures(path_text: str, max_fractures: int) -> tuple[dict[str, float | int], list[dict[str, object]]]:
+    """Read the ASCII FAB geometry written by DFM Generator.
+
+    A FAB record is one planar fracture (or one layer-bound fracture segment):
+    identifier, number of nodes, set number, permeability, compressibility and
+    aperture; followed by its XYZ nodes and a normal-vector line.  The parser
+    intentionally ignores the latter, since Plotly only needs the polygon.
+    """
+    path = Path(path_text)
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    header: dict[str, float | int] = {"fracture_count": 0, "node_count": 0}
+    begin = None
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        if line.startswith("No_Fractures"):
+            try:
+                header["fracture_count"] = int(float(line.split("=", 1)[1]))
+            except (IndexError, ValueError):
+                pass
+        elif line.startswith("No_Nodes ="):
+            try:
+                header["node_count"] = int(float(line.split("=", 1)[1]))
+            except (IndexError, ValueError):
+                pass
+        elif line == "BEGIN FRACTURE":
+            begin = index + 1
+            break
+    if begin is None or not header["fracture_count"]:
+        return header, []
+
+    fractures: list[dict[str, object]] = []
+    index = begin
+    while index < len(lines) and len(fractures) < max_fractures:
+        line = lines[index].strip()
+        if not line or line.startswith("END FRACTURE"):
+            break
+        fields = line.split()
+        try:
+            fracture_id, node_count = int(fields[0]), int(fields[1])
+            permeability, compressibility, aperture = map(float, fields[3:6])
+        except (IndexError, ValueError):
+            index += 1
+            continue
+        index += 1
+        nodes: list[tuple[float, float, float]] = []
+        for _ in range(node_count):
+            if index >= len(lines):
+                break
+            coords = lines[index].split()
+            try:
+                nodes.append((float(coords[1]), float(coords[2]), float(coords[3])))
+            except (IndexError, ValueError):
+                pass
+            index += 1
+        # The normal-vector record has node number 0 and is not geometry.
+        index += 1
+        if len(nodes) >= 2:
+            fractures.append(
+                {
+                    "id": fracture_id,
+                    "nodes": nodes,
+                    "permeability": permeability,
+                    "compressibility": compressibility,
+                    "aperture": aperture,
+                }
+            )
+    return header, fractures
+
+
+def fab_fracture_viewer(fab_files: list[Path], key_prefix: str) -> None:
+    """Show explicit DFM fracture polygons, where a run produced FAB output."""
+    st.subheader("Explicit fracture geometry (FAB)")
+    if not fab_files:
+        st.info("No FAB files were written for this run. Explicit geometry appears here only when the DFN settings produce fractures.")
+        return
+    fab_file = st.selectbox("FAB fracture file", fab_files, format_func=lambda path: path.name, key=f"{key_prefix}_fab_file")
+    max_fractures = st.select_slider(
+        "Maximum fractures to draw",
+        options=[100, 500, 1_000, 5_000, 10_000],
+        value=1_000,
+        key=f"{key_prefix}_fab_limit",
+        help="A limit keeps large explicit DFNs responsive. The file header always reports the full fracture count.",
+    )
+    header, fractures = read_fab_fractures(str(fab_file), max_fractures)
+    total = int(header.get("fracture_count", 0))
+    if not fractures:
+        st.info(f"`{fab_file.name}` contains no explicit fractures (No_Fractures = {total:,}).")
+        return
+    st.caption(f"Showing {len(fractures):,} of {total:,} explicit fracture polygons from `{fab_file.name}`.")
+    figure = go.Figure()
+    for fracture in fractures:
+        nodes = fracture["nodes"]
+        assert isinstance(nodes, list)
+        closed = nodes + [nodes[0]]
+        hover = (
+            f"Fracture segment {fracture['id']}<br>"
+            f"Permeability: {float(fracture['permeability']):.3g} m²<br>"
+            f"Aperture: {float(fracture['aperture']):.3g} m<br>"
+            f"Compressibility: {float(fracture['compressibility']):.3g}<extra></extra>"
+        )
+        figure.add_trace(
+            go.Scatter3d(
+                x=[point[0] for point in closed],
+                y=[point[1] for point in closed],
+                z=[point[2] for point in closed],
+                mode="lines",
+                line={"color": "#d62728", "width": 4},
+                hovertemplate=hover,
+                showlegend=False,
+            )
+        )
+    figure.update_layout(
+        height=680,
+        margin={"l": 0, "r": 0, "t": 32, "b": 0},
+        title="Explicit DFN fracture polygons",
+        scene={
+            "xaxis_title": "X (m)",
+            "yaxis_title": "Y (m)",
+            "zaxis_title": "Z (m)",
+            "aspectmode": "data",
+            "camera": {"projection": {"type": "orthographic"}},
+        },
+    )
+    st.plotly_chart(figure, width="stretch", key=f"{key_prefix}_fab_chart")
 
 
 def valid_project_name(name: str) -> bool:
@@ -845,9 +1500,109 @@ def enrich_ijk_from_cell_index(df: pd.DataFrame, source_dir: Path) -> pd.DataFra
     return result
 
 
-def source_grdecl_for_pointset(pointset: Path, source_dir: Path) -> Path | None:
-    """Find the source GRDECL whose stem prefixes a returned Best-fit point-set name."""
-    matches = [path for path in files_in(source_dir, ("*.grdecl", "*.GRDECL")) if pointset.name.startswith(path.stem)]
+def normalized_pointset_name(value: str) -> str:
+    """Normalise a pointset reference without losing the ``.5`` model token."""
+    name = Path(value.strip().strip('"\'')).name.lower()
+    if name.endswith(".txt"):
+        name = name[:-4]
+    elif name.endswith(".grdecl"):
+        name = name[:-7]
+    # Support the accidental legacy Petrel export suffix and the supplied
+    # Geocosm handoff while making new pointset names the canonical form.
+    name = name.replace("_reservoirgrid", "")
+    name = name.replace("ss_201_cleaned.5", "ss_201.5")
+    name = name.replace("ss_201_cleaned_5", "ss_201_5")
+    return name
+
+
+def tmap_header_source_pointset_names(path_text: str) -> tuple[str, ...]:
+    """Extract source pointset filenames recorded in T>Map comment headers.
+
+    This deliberately remains uncached: users may correct a returned-file
+    provenance header in place, and matching must reflect that edit on the
+    next Streamlit rerun without requiring a server restart.
+    """
+    names: list[str] = []
+    try:
+        with open(path_for_io(Path(path_text)), "r", encoding="utf-8", errors="ignore") as handle:
+            for _ in range(120):
+                line = handle.readline()
+                if not line or line.strip().upper() == "VERSION 1":
+                    break
+                if not line.lstrip().startswith("#"):
+                    continue
+                # T>Map's run comments separate the TCF, pointset and mode
+                # with commas. Capture every segment ending in .txt.
+                for segment in line[1:].split(","):
+                    candidate = segment.strip().strip('"\'')
+                    if candidate.lower().endswith(".txt"):
+                        names.append(Path(candidate).name)
+    except OSError:
+        return ()
+    return tuple(dict.fromkeys(names))
+
+
+def source_pointset_for_returned(returned: Path, source_pointsets: list[Path]) -> Path | None:
+    """Match a returned T>Map file by header provenance, then by its filename."""
+    by_identity: dict[str, list[Path]] = {}
+    for pointset in source_pointsets:
+        by_identity.setdefault(normalized_pointset_name(pointset.name), []).append(pointset)
+    for reference in tmap_header_source_pointset_names(str(returned)):
+        matches = by_identity.get(normalized_pointset_name(reference), [])
+        if len(matches) == 1:
+            return matches[0]
+        # Legacy handoffs called the exported pointset ``*_ReservoirGrid``;
+        # current names end in ``_3d_pointset``. Only use this bridge when the
+        # active dataset selection leaves one unambiguous candidate.
+        legacy_matches = [
+            pointset for pointset in source_pointsets
+            if normalized_pointset_name(pointset.name).startswith(normalized_pointset_name(reference) + "_3d_pointset")
+        ]
+        if len(legacy_matches) == 1:
+            return legacy_matches[0]
+    fallback = [pointset for pointset in source_pointsets if returned.name.startswith(pointset.name)]
+    return max(fallback, key=lambda path: len(path.name)) if fallback else None
+
+
+def standardize_returned_tmap_names(returned_files: list[Path], source_pointsets: list[Path]) -> list[tuple[str, str]]:
+    """Rename provenance-matched real T>Map returns to the project convention.
+
+    Synthetic/inferred files already have a controlled name and are never
+    touched.  Only a file with an unambiguous T>Map header source reference is
+    renamed, so arbitrary File1.txt deliveries remain safe until identifiable.
+    """
+    renamed: list[tuple[str, str]] = []
+    for returned in returned_files:
+        if "_tmap_synthetic" in returned.name or "_tmap_inferred_geocosm" in returned.name:
+            continue
+        source = source_pointset_for_returned(returned, source_pointsets)
+        if source is None:
+            continue
+        target = returned.with_name(f"{source.name}_tmap_real")
+        if returned == target:
+            continue
+        number = 2
+        while target.exists():
+            target = returned.with_name(f"{source.name}_tmap_real_{number}")
+            number += 1
+        try:
+            returned.rename(target)
+            renamed.append((returned.name, target.name))
+        except OSError:
+            # A synchronized folder can temporarily lock a file. Leave it
+            # available under its original name and retry on the next reload.
+            continue
+    return renamed
+
+
+def source_grdecl_for_pointset(pointset: Path, source_dir: Path, source_pointsets: list[Path] | None = None) -> Path | None:
+    """Find a Best-fit source GRDECL using T>Map header provenance where available."""
+    resolved_pointset = source_pointset_for_returned(pointset, source_pointsets or [])
+    pointset_name = normalized_pointset_name((resolved_pointset or pointset).name)
+    matches = [
+        path for path in files_in(source_dir, ("*.grdecl", "*.GRDECL"))
+        if pointset_name.startswith(normalized_pointset_name(path.name))
+    ]
     return max(matches, key=lambda path: len(path.stem)) if matches else None
 
 
@@ -870,14 +1625,129 @@ def related_continuous_limits(df: pd.DataFrame, column: str) -> tuple[float, flo
     base = re.sub(r"_(mean|stdev|p10|p25|p50|p75|p90|geomean)$", "", column.lower())
     related = [name for name in df.columns if re.sub(r"_(mean|stdev|p10|p25|p50|p75|p90|geomean)$", "", name.lower()) == base]
     values = pd.concat([pd.to_numeric(df[name], errors="coerce") for name in related], ignore_index=True).dropna()
+    # Eclipse/Petrel no-value placeholders are data flags, not extrema.
+    values = values[~values.isin([-999.0, -77777.0])]
     if values.empty:
         return None
     if "porosity" in base or base.startswith("poro"):
-        return (0.0, 0.4)
+        return porosity_display_limits(values)
     if "perm" in base:
         logged = np.log10(values.clip(lower=1e-12))
         return float(logged.min()), float(logged.max())
     return float(values.min()), float(values.max())
+
+
+def valid_continuous_mask(values: pd.Series) -> pd.Series:
+    """Exclude GRDECL/T>Map no-value placeholders from continuous displays."""
+    numeric = pd.to_numeric(values, errors="coerce")
+    return numeric.notna() & np.isfinite(numeric) & ~numeric.isin([-999.0, -77777.0])
+
+
+def porosity_display_limits(values) -> tuple[float, float]:
+    """Use a fixed, unit-aware porosity scale for comparable views.
+
+    Dashboard/DFN porosity is a fraction (typically 0–0.4); Geocosm T>Map
+    exports label porosity as vol % (typically 0–40).  The values themselves
+    are retained exactly as supplied; only the display range is selected.
+    """
+    numeric = pd.to_numeric(pd.Series(values), errors="coerce")
+    numeric = numeric[np.isfinite(numeric) & ~numeric.isin([-999.0, -77777.0])]
+    return (0.0, 40.0) if not numeric.empty and float(numeric.max()) > 1.0 else (0.0, 0.4)
+
+
+@st.fragment
+def shale_fallback_controls(saved_defaults: dict, default_values: dict) -> tuple[bool, dict[str, float]]:
+    """Render fallback inputs independently from the expensive Tab 4 viewer."""
+    shale_fallback = st.checkbox(
+        "Use shale-like depth-compaction fallback where T>Map data is absent",
+        key="tab4_shale_fallback",
+        help="Applies to every cell with no returned T>Map porosity. Returned T>Map values remain unchanged; fallback cells retain their selected facies mechanical formula and are marked GeomechSource = 2.",
+    )
+    if not shale_fallback:
+        return False, {}
+    st.caption("Reference curve: φ = φ₀ exp(−c d), where d is depth below the configured Z datum. Starting values follow a normal-compaction-style shale trend and must be calibrated to local data.")
+    fallback_columns = st.columns(3)
+    values = {
+        "fallback_porosity_surface": fallback_columns[0].number_input(
+            "Shale φ₀", min_value=0.01, max_value=0.90,
+            value=float(saved_defaults.get("fallback_porosity_surface", default_values["fallback_porosity_surface"])), step=0.01,
+            key="tab4_fallback_phi0",
+        ),
+        "fallback_compaction_coefficient_per_m": fallback_columns[1].number_input(
+            "Shale c (1/m)", min_value=0.00001, max_value=0.005,
+            value=float(saved_defaults.get("fallback_compaction_coefficient_per_m", default_values["fallback_compaction_coefficient_per_m"])), format="%.6f", step=0.00001,
+            key="tab4_fallback_compaction",
+        ),
+        "fallback_effective_stress_gradient_mpa_per_m": fallback_columns[2].number_input(
+            "Effective stress gradient (MPa/m)", min_value=0.0001, max_value=0.0500,
+            value=float(saved_defaults.get("fallback_effective_stress_gradient_mpa_per_m", default_values["fallback_effective_stress_gradient_mpa_per_m"])), format="%.4f", step=0.0005,
+            key="tab4_fallback_stress_gradient",
+        ),
+    }
+    st.caption("The output writes `DFNPorosity` and `DFNEffectiveStress_MPa` for every valid DFN cell. `GEOMECHSOURCE` identifies T>Map-derived cells (`1`) and depth-fallback cells (`2`).")
+    return True, {name: float(value) for name, value in values.items()}
+
+
+@st.fragment
+def geomechanics_actions(config_path_text: str, config_text: str, target_paths: list[str], output_dir_text: str, write_label: str) -> None:
+    """Keep Tab 4 save/write actions independent from its model viewer."""
+    def current_config_text() -> str:
+        payload = json.loads(config_text)
+        defaults = payload.setdefault("defaults", {})
+        for config_key, state_key in (
+            ("fallback_porosity_surface", "tab4_fallback_phi0"),
+            ("fallback_compaction_coefficient_per_m", "tab4_fallback_compaction"),
+            ("fallback_effective_stress_gradient_mpa_per_m", "tab4_fallback_stress_gradient"),
+        ):
+            if state_key in st.session_state:
+                defaults[config_key] = float(st.session_state[state_key])
+        return json.dumps(payload, indent=2) + "\n"
+
+    save_column, write_column = st.columns(2)
+    with save_column:
+        if st.button("Save geomechanics configuration", key="tab4_save"):
+            Path(config_path_text).parent.mkdir(parents=True, exist_ok=True)
+            Path(config_path_text).write_text(current_config_text(), encoding="utf-8")
+            st.success(f"Saved {display_path(Path(config_path_text))}")
+    with write_column:
+        if st.button(write_label, key="tab4_write", disabled=not target_paths):
+            # Persist the current table first, then use that exact same
+            # configuration for the selected GRDECL writer commands.
+            Path(config_path_text).parent.mkdir(parents=True, exist_ok=True)
+            Path(config_path_text).write_text(current_config_text(), encoding="utf-8")
+            facies_property = str(st.session_state.get("tab4_facies", "Facies"))
+            porosity_property = str(st.session_state.get("tab4_poro", "POROMEAN"))
+            cement_property = str(st.session_state.get("tab4_cement", "None"))
+            stress_property = str(st.session_state.get("tab4_stress", "None"))
+            commands: list[list[str]] = []
+            for target in target_paths:
+                command = ["scripts/assign_geomechanical_properties.py", "--input-grdecl", target, "--output-dir", output_dir_text, "--facies-property", facies_property, "--porosity-property", porosity_property, "--config", config_path_text]
+                if cement_property != "None":
+                    command.extend(["--cement-property", cement_property])
+                if stress_property != "None":
+                    command.extend(["--stress-property", stress_property])
+                if st.session_state.get("tab4_shale_fallback", False):
+                    command.append("--shale-fallback")
+                if st.session_state.get("tab4_write_dipazimuth", True):
+                    command.extend(["--write-dipazimuth", "--dipazimuth-smoothing-cells", str(st.session_state.get("tab4_dipazimuth_smoothing_cells", 3))])
+                commands.append(command)
+            if run_commands(commands):
+                augmented_grdecl_dataframe.clear()
+                written_files = [
+                    Path(output_dir_text) / f"{Path(target).stem}_with_geomechanical_properties.grdecl"
+                    for target in target_paths
+                ]
+                available = [path for path in written_files if path.exists()]
+                if available:
+                    # On the automatic rerun the output folder is re-listed,
+                    # then the viewer opens the first newly written model.
+                    # The remaining multi-realization files stay available in
+                    # its selector.
+                    st.session_state["tab4_viewer_choice"] = "DFN-preparation GRDECL"
+                    st.session_state["tab4_dfn_file"] = available[0]
+                    st.success(f"DFN-preparation GRDECL written. Opening `{available[0].name}` in the viewer…")
+                    st.rerun()
+                st.success("DFN-preparation GRDECL written, but no expected output file was found to open automatically.")
 
 
 def grid_layer_selector(axis: str, key: str, minimum: int, maximum: int) -> int:
@@ -911,6 +1781,7 @@ def plot_3d_points(
     key: str,
     vertical_exaggeration: float = 1.0,
     reference_df: pd.DataFrame | None = None,
+    continuous_limits: tuple[float, float] | None = None,
 ) -> None:
     """Interactive 3D point display for the currently loaded model dataset."""
     frame = reference_df if reference_df is not None and not reference_df.empty else df
@@ -930,15 +1801,28 @@ def plot_3d_points(
                 hovertemplate=f"<b>{facies_label(category)}</b><br>X: %{{x:.0f}}<br>Y: %{{y:.0f}}<br>Z: %{{z:.0f}}<extra></extra>",
             ))
     else:
-        colour = pd.to_numeric(df[color_column], errors="coerce")
+        raw_values = pd.to_numeric(df[color_column], errors="coerce")
+        colour = raw_values.copy()
         colour_title = color_column
         if "perm" in color_column.lower():
             colour = np.log10(colour.clip(lower=1e-12))
             colour_title = f"{color_column} (log10 mD)"
+        marker = {"size": 2, "color": colour, "colorscale": "Viridis", "showscale": True, "colorbar": {"title": colour_title}}
+        if continuous_limits is not None:
+            marker.update({"cmin": continuous_limits[0], "cmax": continuous_limits[1]})
+        metadata_columns = [column for column in ("I", "J", "K", "CellIndex") if column in df.columns]
+        customdata = np.column_stack([raw_values.to_numpy(), *[df[column].to_numpy() for column in metadata_columns]])
+        hover_lines = [f"<b>{color_column}</b>: %{{customdata[0]:.6g}}", "X: %{x:.2f}", "Y: %{y:.2f}", "Z: %{z:.2f}"]
+        if {"I", "J", "K"}.issubset(metadata_columns):
+            hover_lines.append("I, J, K: %{customdata[1]}, %{customdata[2]}, %{customdata[3]}")
+        if "CellIndex" in metadata_columns:
+            cell_position = metadata_columns.index("CellIndex") + 1
+            hover_lines.append(f"CellIndex: %{{customdata[{cell_position}]}}")
         fig.add_trace(go.Scatter3d(
             x=df["X"], y=df["Y"], z=df["Z"], mode="markers",
-            marker={"size": 2, "color": colour, "colorscale": "Viridis", "showscale": True, "colorbar": {"title": colour_title}},
-            hovertemplate=f"X: %{{x:.0f}}<br>Y: %{{y:.0f}}<br>Z: %{{z:.0f}}<extra></extra>",
+            marker=marker,
+            customdata=customdata,
+            hovertemplate="<br>".join(hover_lines) + "<extra></extra>",
         ))
     # A small horizontal north arrow: projected model coordinates conventionally
     # use X as easting and positive Y as northing.
@@ -1000,7 +1884,7 @@ def plot_3d_points(
             }],
         },
     )
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
 def slice_depth_band_below_top(df: pd.DataFrame, depth_below_top_m: float, half_thickness_m: float) -> pd.DataFrame:
@@ -1497,7 +2381,7 @@ def parse_point_header(path: Path) -> list[str]:
             if line == "END HEADER":
                 break
             if in_header:
-                columns.append(line.split(",", 1)[-1])
+                columns.append(line.split(",", 1)[-1].strip().strip('"'))
     return columns
 
 
@@ -1544,7 +2428,7 @@ def plot_map(
 ) -> None:
     if px is None:
         st.info("Install Plotly to enable interactive maps: python -m pip install plotly")
-        st.dataframe(df.head(500), use_container_width=True)
+        st.dataframe(df.head(500), width="stretch")
         return
     
     # Check if this is cell polygon data
@@ -1586,7 +2470,7 @@ def plot_map(
         if "perm" in color_column.lower():
             color_field = "_log10_permeability"
             plot_data[color_field] = np.log10(pd.to_numeric(plot_data[color_column], errors="coerce").clip(lower=1e-12))
-        color_range = continuous_limits or ((0.0, 0.4) if ("porosity" in color_column.lower() or color_column.lower().startswith("poro")) else None)
+        color_range = continuous_limits or (porosity_display_limits(plot_data[color_column]) if ("porosity" in color_column.lower() or color_column.lower().startswith("poro")) else None)
         fig = px.scatter(
             plot_data,
             x="X",
@@ -1612,7 +2496,7 @@ def plot_map(
         x_min, x_max, y_min, y_max = extent
         fig.update_xaxes(range=[x_min, x_max])
         fig.update_yaxes(range=[y_min, y_max])
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
 def plot_section(df: pd.DataFrame, color_column: str, axis_mode: str, selector: int | float, colors: dict[int, str] | None = None, key: str | None = None, continuous_limits: tuple[float, float] | None = None) -> None:
@@ -1681,7 +2565,7 @@ def plot_section(df: pd.DataFrame, color_column: str, axis_mode: str, selector: 
         if "perm" in color_column.lower():
             color_field = "_log10_permeability"
             plot_data[color_field] = np.log10(pd.to_numeric(plot_data[color_column], errors="coerce").clip(lower=1e-12))
-        color_range = continuous_limits or ((0.0, 0.4) if ("porosity" in color_column.lower() or color_column.lower().startswith("poro")) else None)
+        color_range = continuous_limits or (porosity_display_limits(plot_data[color_column]) if ("porosity" in color_column.lower() or color_column.lower().startswith("poro")) else None)
         fig = px.scatter(
             plot_data,
             x=x_axis,
@@ -1705,7 +2589,7 @@ def plot_section(df: pd.DataFrame, color_column: str, axis_mode: str, selector: 
     
     fig.update_xaxes(range=x_limits)
     fig.update_yaxes(range=z_limits)
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
 @st.fragment
@@ -1715,6 +2599,7 @@ def visualization_panel(
     default_color: str | None = None,
     is_grdecl: bool = False,
     cell_only: bool = False,
+    dynamic_continuous_scale: bool = False,
 ) -> None:
     numeric_or_small = [
         col
@@ -1723,7 +2608,7 @@ def visualization_panel(
         and (pd.api.types.is_numeric_dtype(df[col]) or df[col].nunique(dropna=True) <= 30)
     ]
     if not numeric_or_small:
-        st.dataframe(df.head(500), use_container_width=True)
+        st.dataframe(df.head(500), width="stretch")
         return
     color_index = numeric_or_small.index(default_color) if default_color in numeric_or_small else 0
     color_column = st.selectbox("Property", numeric_or_small, index=color_index, key=f"{key}_color")
@@ -1739,10 +2624,27 @@ def visualization_panel(
         colors = {category: saved_palette.get(category, default_facies_color(position)) for position, category in enumerate(categories)}
     lock_scale = False
     continuous_limits = None
+    valid_value_mask: pd.Series | None = None
     if not is_discrete and color_column != "CellIndex" and pd.api.types.is_numeric_dtype(df[color_column]):
-        lock_scale = st.checkbox("Lock colour scale across related statistics (P10/P50/P90)", key=f"{key}_lock_scale")
-        if lock_scale:
-            continuous_limits = related_continuous_limits(df, color_column)
+        valid_value_mask = valid_continuous_mask(df[color_column])
+        valid_values = pd.to_numeric(df.loc[valid_value_mask, color_column], errors="coerce")
+        if ("porosity" in color_column.lower() or color_column.lower().startswith("poro")) and not dynamic_continuous_scale:
+            # Keep DFN/T>Map porosity comparable across K layers and views.
+            continuous_limits = porosity_display_limits(valid_values)
+            unit_caption = "0–40 vol %" if continuous_limits[1] == 40.0 else "0–0.4 fraction"
+            st.caption(f"Porosity colour scale is fixed at {unit_caption} for comparison between layers and models.")
+        else:
+            if dynamic_continuous_scale and ("porosity" in color_column.lower() or color_column.lower().startswith("poro")):
+                st.caption("DFN result colour scale follows the selected property values, so low fracture porosity remains visible.")
+            lock_scale = st.checkbox("Lock colour scale across related statistics (P10/P50/P90)", key=f"{key}_lock_scale")
+            if lock_scale:
+                continuous_limits = related_continuous_limits(df, color_column)
+            elif not valid_values.empty:
+                if "perm" in color_column.lower():
+                    logged = np.log10(valid_values[valid_values > 0])
+                    continuous_limits = (float(logged.min()), float(logged.max())) if not logged.empty else None
+                else:
+                    continuous_limits = (float(valid_values.min()), float(valid_values.max()))
     
     # Check if we have cell polygon data
     has_cells = all(col in df.columns for col in ["X0", "Y0", "X1", "Y1", "X2", "Y2", "X3", "Y3"])
@@ -1766,6 +2668,16 @@ def visualization_panel(
     else:
         map_extent = None
 
+    # Do not render cells without a returned continuous value as the minimum
+    # of the colour scale. Their absence is clearer, and keeps the scale tied
+    # to actual T>Map/DFN data rather than -77777/-999 placeholders.
+    viewer_df = plot_df
+    if valid_value_mask is not None and not active_cell_mode:
+        viewer_df = plot_df.loc[valid_continuous_mask(plot_df[color_column])].copy()
+        if viewer_df.empty:
+            st.warning("No valid values are available for this property; all cells contain a no-value placeholder.")
+            return
+
     if view == "Map viewer":
         if active_cell_mode:
             # For cell data, show one K-layer at a time
@@ -1784,20 +2696,26 @@ def visualization_panel(
                 slice_mode = st.radio("Map slice", ["K layer", "Depth band below model top"], horizontal=True, key=f"{key}_point_slice_mode")
                 if slice_mode == "K layer":
                     selected_k = k_layer_selector(f"{key}_point_k_layer", k_min, k_max)
-                    point_layer = plot_df[plot_df["K"] == selected_k]
+                    point_layer = viewer_df[viewer_df["K"] == selected_k]
                     title = f"Map viewer (points, K={selected_k})"
                 else:
-                    max_depth = float((plot_df.groupby(["I", "J"])["Z"].transform("max") - plot_df["Z"]).max())
+                    max_depth = float((viewer_df.groupby(["I", "J"])["Z"].transform("max") - viewer_df["Z"]).max())
                     st.caption("Uses the shallowest exported point in each I/J column as the local model top. Only real points within the chosen depth band are shown; gaps reveal reduced sampling coverage.")
                     depth_below_top = st.slider("Depth below model top (m)", 0.0, max(1.0, max_depth), min(10.0, max_depth), step=1.0, key=f"{key}_point_depth_below_top")
                     half_thickness = st.slider("Depth-band half-thickness (m)", 1.0, max(1.0, max_depth / 2.0), min(5.0, max(1.0, max_depth / 2.0)), step=1.0, key=f"{key}_point_depth_band")
-                    point_layer = slice_depth_band_below_top(plot_df, depth_below_top, half_thickness)
+                    point_layer = slice_depth_band_below_top(viewer_df, depth_below_top, half_thickness)
                     title = f"Map viewer (points, {depth_below_top:g} ± {half_thickness:g} m below model top)"
                 plot_map(point_layer, color_column, title, colors if is_discrete else None, key=f"{key}_point_map", extent=map_extent, continuous_limits=continuous_limits)
             else:
-                plot_map(plot_df, color_column, "Map viewer", colors if is_discrete else None, key=f"{key}_point_map", extent=map_extent, continuous_limits=continuous_limits)
+                plot_map(viewer_df, color_column, "Map viewer", colors if is_discrete else None, key=f"{key}_point_map", extent=map_extent, continuous_limits=continuous_limits)
     elif view == "3D viewer":
-        three_d_df = plot_df
+        three_d_df = viewer_df
+        if not is_discrete and ("porosity" in color_column.lower() or color_column.lower().startswith("poro")):
+            porosity_values = pd.to_numeric(three_d_df[color_column], errors="coerce")
+            three_d_df = three_d_df[porosity_values.notna() & (porosity_values > -999.0)]
+            if three_d_df.empty:
+                st.warning("No valid porosity values are available for the 3D viewer.")
+                st.stop()
         vertical_exaggeration = st.slider(
             "Vertical exaggeration",
             min_value=1.0,
@@ -1813,7 +2731,7 @@ def visualization_panel(
                 axis = slice_axis[0]
                 minimum, maximum = int(plot_df[axis].min()), int(plot_df[axis].max())
                 selected_layer = grid_layer_selector(axis, f"{key}_3d_{axis}_layer", minimum, maximum)
-                three_d_df = plot_df[plot_df[axis] == selected_layer]
+                three_d_df = viewer_df[viewer_df[axis] == selected_layer]
                 st.caption(f"Showing {slice_axis} = {selected_layer}: {len(three_d_df):,} points.")
         plot_3d_points(
             three_d_df,
@@ -1822,6 +2740,7 @@ def visualization_panel(
             key=f"{key}_3d",
             vertical_exaggeration=vertical_exaggeration,
             reference_df=plot_df,
+            continuous_limits=continuous_limits,
         )
     elif view == "Cross-section":
         section_options = ["X slice", "Y slice"]
@@ -1842,9 +2761,9 @@ def visualization_panel(
         if active_cell_mode:
             plot_section_with_cells(df, color_column, axis_mode, selector, colors if is_discrete else None, key=f"{key}_cell_section")
         else:
-            plot_section(plot_df, color_column, axis_mode, selector, colors if is_discrete else None, key=f"{key}_point_section", continuous_limits=continuous_limits)
+            plot_section(viewer_df, color_column, axis_mode, selector, colors if is_discrete else None, key=f"{key}_point_section", continuous_limits=continuous_limits)
     else:
-        st.dataframe(df.head(2000), use_container_width=True)
+        st.dataframe(df.head(2000), width="stretch")
 
     if is_discrete and categories:
         st.divider()
@@ -1968,7 +2887,7 @@ def geomechanics_property_selectors(properties: list[str]) -> tuple[str, str, st
     porosity_property = st.selectbox("T>Map porosity property", porosity_options or properties, key="tab4_poro")
     cement_property = st.selectbox("Optional cement property", ["None", *(cement_options or properties)], key="tab4_cement")
     stress_property = st.selectbox("Optional effective-stress property", ["None", *(stress_options or properties)], key="tab4_stress")
-    st.caption("These choices are used only when writing DFN-preparation properties. Use the Viewer independently to inspect any property.")
+    st.caption("These choices are used only when writing DFN-preparation properties. The output also writes `DFNPorosity` and `DFNEffectiveStress_MPa`: T>Map values where present, otherwise the explicitly enabled depth-compaction fallback.")
     return facies_property, porosity_property, cement_property, stress_property
 
 
@@ -2046,12 +2965,13 @@ ACTIVE_SOURCE_GRDECL_DIR = ACTIVE_PROJECT_INPUT_DIR / "source_grdecls"
 ACTIVE_PROJECT_OUTPUT_DIR = OUTPUT_ROOT / ACTIVE_PROJECT_NAME
 ACTIVE_APPROACHES = approaches_for_project(ACTIVE_PROJECT_OUTPUT_DIR)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "1. Prepare models for diagenesis (FSM → FDM)",
     "2. Diagenesis modelling data (T>Map)",
     "3. Review diagenesis results",
     "4. Prepare DFN inputs (FDM → FFM)",
     "5. Run DFN Generator (FFM)",
+    "6. Review DFN results",
 ])
 
 with tab1:
@@ -2176,6 +3096,7 @@ with tab1:
             st.caption(f"Best-fit conversion target: {grdecl.name}" if grdecl else "Best-fit conversion target: select a source GRDECL above.")
         else:
             st.caption(f"Multi-realization conversion target: {len(selected_multi_models)} selected GRDECL model(s).")
+        st.caption(f"Conversion also creates the returned T>Map folder: {display_path(approach['tmap_dir'])}")
         can_build = source_grdecl_dir.is_dir() and (bool(grdecl) if approach_name == "Best-fit model" else bool(selected_multi_models))
         if st.button("Convert selected approach to 3D point sets", key="build_points", disabled=not can_build):
             commands = [
@@ -2210,6 +3131,18 @@ with tab1:
                 },
             )
             if conversion_succeeded:
+                # Create the hand-off location with the pointsets, rather than
+                # waiting until a synthetic return is generated.  This makes
+                # the intended destination explicit for real T>Map results.
+                returned_tmap_dir = approach["tmap_dir"]
+                returned_tmap_dir.mkdir(parents=True, exist_ok=True)
+                handoff_note = returned_tmap_dir / "README.txt"
+                if not handoff_note.exists():
+                    handoff_note.write_text(
+                        "Place returned T>Map point-set files for this approach in this folder.\n"
+                        "Retain the original point-set filename and ID columns so the dashboard can match and append results.\n",
+                        encoding="utf-8",
+                    )
                 # The rerun refreshes the output-folder listing, then opens the
                 # actual newly written pointsets rather than leaving the user on
                 # an original-model or temporary preview.
@@ -2313,6 +3246,7 @@ with tab2:
         approach_name, approach = approach_selector("tab2_approach")
         pointset_files = [path for path in files_in(approach["point_dir"], ("*",)) if is_tmap_pointset_file(path)]
         tmap_files: list[Path] = []
+        renamed_returns: list[tuple[str, str]] = []
         is_reduced = False
         if not pointset_files:
             st.info("No 3D pointset dataset has been created for this approach. Go to Tab 1, select this approach, and run Conversion first.")
@@ -2327,12 +3261,23 @@ with tab2:
                 dataset_kind = st.radio("Available source 3D pointset datasets", available_kinds, horizontal=True, key="tab2_bestfit_dataset")
                 is_reduced = dataset_kind == "Reduced vertical sampling"
                 pointset_files = [path for path in pointset_files if ("_control_" in path.name) == is_reduced]
-                tmap_files = [path for path in tmap_files if ("_control_" in path.name) == is_reduced]
+                renamed_returns = standardize_returned_tmap_names(tmap_files, pointset_files)
+                if renamed_returns:
+                    tmap_files = [path for path in files_in(approach["tmap_dir"], ("*",)) if is_tmap_pointset_file(path)]
+                # A real return may have an unrelated filename, so classify it
+                # from the recorded T>Map source-pointset header instead.
+                tmap_files = [
+                    path for path in tmap_files
+                    if source_pointset_for_returned(path, pointset_files) in pointset_files
+                ]
             else:
                 selected_pointsets = pointset_files
             status_rows = []
             for pointset in pointset_files:
-                matching_returns = [returned for returned in tmap_files if returned.name == pointset.name or returned.name.startswith(pointset.name)]
+                matching_returns = [
+                    returned for returned in tmap_files
+                    if source_pointset_for_returned(returned, pointset_files) == pointset
+                ]
                 has_synthetic = any("_tmap_synthetic" in returned.name for returned in matching_returns)
                 has_inferred = any("_tmap_inferred_geocosm" in returned.name for returned in matching_returns)
                 has_real = any("_tmap_synthetic" not in returned.name and "_tmap_inferred_geocosm" not in returned.name for returned in matching_returns)
@@ -2349,7 +3294,9 @@ with tab2:
                     "T>Map data": tmap_status,
                 })
             st.caption("Source 3D pointsets and matching returned T>Map data")
-            st.dataframe(pd.DataFrame(status_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(status_rows), hide_index=True, width="stretch")
+            if renamed_returns:
+                st.success("Standardized returned T>Map filename(s): " + "; ".join(f"{old} → {new}" for old, new in renamed_returns))
             st.info(
                 f"Run the selected source pointsets from {display_path(approach['point_dir'])} through T>Map. "
                 f"After T>Map has run, place its returned point-set file(s) in {display_path(approach['tmap_dir'])}, retaining the input filename and ID columns."
@@ -2376,6 +3323,18 @@ with tab2:
                         for command in commands
                     ]
                 if run_commands(commands):
+                    generated_files = [
+                        approach["tmap_dir"] / f"{pointset.name}_tmap_synthetic"
+                        for pointset in selected_pointsets
+                    ]
+                    generated_files = [path for path in generated_files if path.exists()]
+                    if generated_files:
+                        # Make the newly generated return the active inspection
+                        # dataset immediately after rerun. For Best-fit, also
+                        # preselect every generated model for the next append.
+                        st.session_state["tab2_tmap_file"] = generated_files[0]
+                        if approach_name == "Best-fit model":
+                            st.session_state["tab2_bestfit_append_files"] = generated_files
                     st.rerun()
             if not tmap_files:
                 tmap_file = None
@@ -2386,6 +3345,14 @@ with tab2:
                     st.info("Select a returned T>Map point-set file below, inspect it in the viewer, then append the shared returned dataset to the selected realization workflow.")
                 tmap_file = st.selectbox("Returned T>Map point-set file", tmap_files, format_func=lambda path: path.name, key="tab2_tmap_file")
                 st.caption(display_path(tmap_file))
+                if approach_name == "Best-fit model":
+                    header_sources = tmap_header_source_pointset_names(str(tmap_file))
+                    matched_source = source_pointset_for_returned(tmap_file, pointset_files)
+                    if matched_source:
+                        provenance = header_sources[0] if header_sources else tmap_file.name
+                        st.caption(f"Matched to source 3D pointset `{matched_source.name}` from T>Map provenance `{provenance}`.")
+                    else:
+                        st.warning("No source 3D pointset could be matched from this file's name or T>Map header. It cannot be appended until its provenance is identifiable.")
         if approach_name != "Best-fit model" and tmap_file and st.button("Append returned T>Map data back to GRDECLs", key="append_tmap"):
             commands = append_commands_for_project(approach, source_grdecl_dir)
             run_commands(commands, show_live_progress=True)
@@ -2401,21 +3368,25 @@ with tab2:
             if st.button("Append selected Best-fit models", key="append_bestfit_batch", disabled=not append_files):
                 commands: list[list[str]] = []
                 for returned_file in append_files:
-                    source_grdecl = source_grdecl_for_pointset(returned_file, source_grdecl_dir)
+                    source_grdecl = source_grdecl_for_pointset(returned_file, source_grdecl_dir, pointset_files)
                     if source_grdecl is None:
                         st.error(f"Could not identify the source GRDECL for {returned_file.name}.")
                         continue
-                    reduced_file = "_control_" in returned_file.name
+                    # Real T>Map returns can be vertically sampled even when
+                    # their historical name does not carry `_control_`. Their
+                    # header/columns determine the sparse X/Y/Z interpolation
+                    # path in the append script.
+                    reduced_file = "_control_" in returned_file.name or "_tmap_real" in returned_file.name
                     extra = ["--single-grdecl", str(source_grdecl), "--single-pointset", str(returned_file)]
                     if reduced_file:
                         extra.extend(["--vertical-interpolate", "--property", "Facies"])
                     commands.extend([[*command, *extra] for command in append_commands_for_project(approach, source_grdecl_dir)])
                 if commands:
                     run_commands(commands)
-        if approach_name == "Best-fit model" and tmap_file and is_reduced:
+        if approach_name == "Best-fit model" and tmap_file and (is_reduced or "_tmap_real" in tmap_file.name):
             st.info(
-                "Appending reduced T>Map points linearly interpolates each returned property vertically within its I/J/facies column to populate original GRDECL cells between control points. "
-                "Top and bottom control points are retained, so this is interpolation within the sampled interval rather than unconstrained extrapolation. "
+                "This T>Map dataset has lower point resolution than the original GRDECL. When appended, each returned numerical property is matched by X/Y and linearly interpolated vertically within its I/J column to populate original GRDECL cells between returned points. "
+                "The returned `Facies` and `point_id` columns are not written back, so the original GRDECL facies remain unchanged. "
                 f"The augmented GRDECL is written to: {display_path(approach['augmented_dir'])}"
             )
     with right:
@@ -2478,6 +3449,7 @@ with tab4:
                 st.caption(f"The same facies configuration and selected input properties will be applied to {len(geomech_targets)} selected realization(s).")
             properties = grdecl_property_keywords(geomech_input)
             facies_property, porosity_property, cement_property, stress_property = geomechanics_property_selectors(properties)
+            output_dir = geomech_approach["dfn_dir"]
             st.subheader("Model used and parameter guidance")
             st.latex(r"E=E_{ref}(1-\phi/\phi_c)^n(1+a_cC)(1+a_\sigma\sigma/\sigma_{ref})")
             st.latex(r"G=E/[2(1+\nu)],\qquad K=E/[3(1-2\nu)]")
@@ -2489,11 +3461,22 @@ with tab4:
 
 Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: clean sandstone `0.15–0.30`, shale `0.25–0.40`, carbonate `0.20–0.35`, chalk `0.25–0.35`.
 
-`Young ref` is the zero-porosity reference modulus. Defaults are critical porosity `0.40`, porosity exponent `2`, cement factor `2`, and stress factor `0`. Friction, cohesion, tensile strength, and fracture energy are user-assigned DFN inputs, not inferred from T>Map.""")
+            `Young ref` is the zero-porosity reference modulus. Defaults are critical porosity `0.40`, porosity exponent `2`, cement factor `2`, and stress factor `0`. Friction, cohesion, tensile strength, and fracture energy are user-assigned DFN inputs, not inferred from T>Map.""")
             codes = sorted({int(float(value)) for value in expand_values(tokenize_grdecl(geomech_input, {facies_property})[facies_property])})
-            config_path = geomech_input.parent / "geomechanics_config.json"
-            try: config = json.loads(config_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError): config = {}
+            # The configuration belongs to the DFN-preparation output step,
+            # alongside the resulting GRDECLs, rather than the augmented
+            # T>Map input folder. Read the legacy location once if present so
+            # existing calibrations are not lost during this transition.
+            config_path = output_dir / "geomechanics_config.json"
+            legacy_config_path = geomech_input.parent / "geomechanics_config.json"
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                try:
+                    config = json.loads(legacy_config_path.read_text(encoding="utf-8"))
+                    st.caption(f"Loaded existing configuration from {display_path(legacy_config_path)}. Saving or writing will place it in {display_path(config_path)}.")
+                except (OSError, json.JSONDecodeError):
+                    config = {}
             defaults = {
                 "critical_porosity": 0.40, "porosity_exponent": 2.0, "cement_factor": 2.0,
                 "stress_factor": 0.0, "stress_reference_mpa": 30.0, "minimum_young_gpa": 0.01,
@@ -2502,30 +3485,24 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
                 "fallback_effective_stress_gradient_mpa_per_m": 0.015,
                 "fallback_depth_datum_m": 0.0,
             }
-            shale_fallback = st.checkbox(
-                "Use shale-like depth-compaction fallback where T>Map data is absent",
-                key="tab4_shale_fallback",
-                help="Applies only to facies assigned the shale_porosity_stress formula. Reservoir cells with returned T>Map porosity continue to use it.",
+            shale_fallback, fallback_values = shale_fallback_controls(config.get("defaults", {}), defaults)
+            defaults.update(fallback_values)
+            write_dipazimuth = st.checkbox(
+                "Add locally smoothed DIPAZIMUTH from the model-top horizon",
+                value=True,
+                key="tab4_write_dipazimuth",
+                help="Fits a local smoothed depth plane around every I/J position on the top K layer, then writes its local down-dip azimuth in degrees clockwise from North through the corresponding column. This follows broad horizon contours while reducing cell-scale noise.",
             )
-            if shale_fallback:
-                st.caption("Reference curve: φ = φ₀ exp(−c d), where d is depth below the configured Z datum. Starting values follow a normal-compaction-style shale trend and must be calibrated to local data.")
-                fallback_columns = st.columns(3)
-                defaults["fallback_porosity_surface"] = fallback_columns[0].number_input(
-                    "Shale φ₀", min_value=0.01, max_value=0.90,
-                    value=float(config.get("defaults", {}).get("fallback_porosity_surface", defaults["fallback_porosity_surface"])), step=0.01,
-                    key="tab4_fallback_phi0",
+            if write_dipazimuth:
+                dipazimuth_smoothing_cells = st.slider(
+                    "DIPAZIMUTH smoothing radius (I/J cells)",
+                    min_value=1,
+                    max_value=10,
+                    value=3,
+                    help="The local neighbourhood used to estimate horizon dip. Increase it for broader, smoother structural trends; decrease it to follow more local contour changes.",
+                    key="tab4_dipazimuth_smoothing_cells",
                 )
-                defaults["fallback_compaction_coefficient_per_m"] = fallback_columns[1].number_input(
-                    "Shale c (1/m)", min_value=0.00001, max_value=0.005,
-                    value=float(config.get("defaults", {}).get("fallback_compaction_coefficient_per_m", defaults["fallback_compaction_coefficient_per_m"])), format="%.6f", step=0.00001,
-                    key="tab4_fallback_compaction",
-                )
-                defaults["fallback_effective_stress_gradient_mpa_per_m"] = fallback_columns[2].number_input(
-                    "Effective stress gradient (MPa/m)", min_value=0.0001, max_value=0.0500,
-                    value=float(config.get("defaults", {}).get("fallback_effective_stress_gradient_mpa_per_m", defaults["fallback_effective_stress_gradient_mpa_per_m"])), format="%.4f", step=0.0005,
-                    key="tab4_fallback_stress_gradient",
-                )
-                st.caption("The output `GEOMECHSOURCE` identifies T>Map-derived cells (`1`) and depth-fallback shale cells (`2`).")
+                st.caption("`DIPAZIMUTH` follows the locally smoothed model-top-horizon contours and is written in degrees clockwise from North. Michael's example property values of 65–115 confirm that GRDECL property values are degrees, despite its configuration comment mentioning radians.")
             facies_names = read_facies_names()
             tmap_coverage = facies_tmap_coverage(str(geomech_input), facies_property, porosity_property)
             rows = []
@@ -2544,28 +3521,46 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
             edited = geomechanics_facies_editor(rows)
             st.caption(f"`T>Map data` is read from `{porosity_property}` in the selected augmented GRDECL. Use `No T>Map` facies to identify where the shale depth-compaction fallback is relevant.")
             edited_config = {"defaults": defaults, "facies": {str(int(row["Facies"])): {"formula": str(row["Formula"]), "young_reference_gpa": float(row["Young ref (GPa)"]), "poissons_ratio": float(row["Poisson"]), "friction_coefficient": float(row["Friction"]), "cohesion_mpa": float(row["Cohesion (MPa)"]), "tensile_strength_mpa": float(row["Tensile (MPa)"]), "fracture_energy_j_m2": float(row["Fracture energy (J/m²)"])} for _, row in edited.iterrows()}}
-            if st.button("Save geomechanics configuration", key="tab4_save"):
-                config_path.write_text(json.dumps(edited_config, indent=2) + "\n", encoding="utf-8")
-                st.success(f"Saved {display_path(config_path)}")
-            output_dir = geomech_approach["dfn_dir"]
             write_label = (
                 "Write geomechanical DFN-preparation GRDECL"
                 if geomech_approach_name == "Best-fit model"
                 else f"Write DFN-preparation GRDECLs for {len(geomech_targets)} selected realization(s)"
             )
-            if st.button(write_label, key="tab4_write", disabled=not geomech_targets):
-                # Writing always persists the current table first. This avoids a
-                # hidden dependency on the separate Save button and guarantees
-                # the calculation uses exactly the parameters on screen.
-                config_path.write_text(json.dumps(edited_config, indent=2) + "\n", encoding="utf-8")
-                commands = []
-                for target in geomech_targets:
-                    command = ["scripts/assign_geomechanical_properties.py", "--input-grdecl", str(target), "--output-dir", str(output_dir), "--facies-property", facies_property, "--porosity-property", porosity_property, "--config", str(config_path)]
-                    if cement_property != "None": command.extend(["--cement-property", cement_property])
-                    if stress_property != "None": command.extend(["--stress-property", stress_property])
-                    if shale_fallback: command.append("--shale-fallback")
-                    commands.append(command)
-                run_commands(commands)
+            geomechanics_actions(
+                str(config_path),
+                json.dumps(edited_config, indent=2) + "\n",
+                [str(target) for target in geomech_targets],
+                str(output_dir),
+                write_label,
+            )
+            generated_targets = [
+                output_dir / f"{target.stem}_with_geomechanical_properties.grdecl"
+                for target in geomech_targets
+            ]
+            existing_generated = [path for path in generated_targets if path.exists()]
+            if existing_generated:
+                st.divider()
+                st.caption(f"{len(existing_generated)} generated DFN-preparation GRDECL(s) match the currently selected model(s).")
+                confirm_remove_dfn = st.checkbox(
+                    "Confirm removal of the selected generated DFN-preparation GRDECL(s)",
+                    key="tab4_confirm_remove_dfn",
+                    help="This removes only the generated files in the DFN-preparation output folder. The geomechanics configuration in that same folder is retained.",
+                )
+                if st.button("Remove selected DFN-preparation data", key="tab4_remove_dfn", disabled=not confirm_remove_dfn):
+                    removed, failures = [], []
+                    for path in existing_generated:
+                        try:
+                            path.unlink()
+                            removed.append(path.name)
+                        except OSError as exc:
+                            failures.append(f"{path.name}: {exc}")
+                    augmented_grdecl_dataframe.clear()
+                    if removed:
+                        st.success(f"Removed {len(removed)} generated DFN-preparation GRDECL(s).")
+                    if failures:
+                        st.error("Could not remove:\n" + "\n".join(failures))
+                    if removed and not failures:
+                        st.rerun()
     with right:
         if geomech_input:
             output_dir = geomech_approach["dfn_dir"]
@@ -2576,68 +3571,339 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
             viewer_df = augmented_grdecl_dataframe(str(viewer_file), max_rows)
             default_property = "Facies" if "Facies" in viewer_df.columns else "FACIES" if "FACIES" in viewer_df.columns else None
             visualization_panel(viewer_df, "tab4_viewer", default_property, is_grdecl=True)
+            if viewer_choice == "DFN-preparation GRDECL":
+                st.caption("Inspect `DFNPorosity`, `DFNEffectiveStress_MPa`, and `DIPAZIMUTH` to verify the values passed to DFN Generator. `YoungsModulus_Pa` is written in the units required by the executable; `DIPAZIMUTH` is degrees clockwise from North.")
 
 with tab5:
     left, right = st.columns([0.42, 0.58])
     with left:
-        st.subheader("DFN Generator handoff")
-        st.caption("Input: DFN-prepared GRDECLs. Action: configure and run the GRDECL-capable DFN Generator executable. Output: fracture-network realisations and derived properties.")
-        dfn_approach_name, dfn_approach = approach_selector("tab5_approach")
-        dfn_inputs = files_in(dfn_approach["dfn_dir"], ("*.grdecl", "*.GRDECL"))
-        if not dfn_inputs:
-            st.info("No DFN-prepared GRDECLs are available for this approach yet. Create them in Tab 4 first.")
+        st.subheader("Run DFN Generator")
+        st.caption("Input: DFN-prepared GRDECLs. Action: write Michael's GRDECL configuration and launch the executable in the background. Output: staged fracture GRDECLs, FAB and ASCII DFNs.")
+        selected_dfn_inputs: list[Path] = []
+        input_mode = st.radio("DFN input", ["Project DFN-prepared GRDECL", "Michael's supplied demo grid"], horizontal=True, key="tab5_input_mode")
+        demo_mode = input_mode == "Michael's supplied demo grid"
+        if demo_mode:
+            dfn_approach_name = "Michael demo grid"
+            dfn_approach = None
+            if not DFN_DEMO_GRID.exists() or not DFN_DEMO_CONFIG.exists():
+                st.error("Michael's demo grid or configuration file is not available in `original_data/dfn_generator_reference`.")
+            else:
+                selected_dfn_inputs = [DFN_DEMO_GRID]
+                demo_properties = grdecl_property_keywords(DFN_DEMO_GRID)
+                st.caption(f"Demo grid: `{DFN_DEMO_GRID.name}`. Configuration: `{DFN_DEMO_CONFIG.name}`.")
+                if st.button("Load Michael's configuration into the controls", key="tab5_load_demo_config"):
+                    load_dfn_configuration_into_controls(DFN_DEMO_CONFIG, demo_properties)
+                    st.session_state["tab5_demo_configuration_loaded"] = True
+                    st.rerun()
+                if st.session_state.get("tab5_demo_configuration_loaded"):
+                    st.success("Michael's active configuration values are loaded below. You can adjust them before launching a separate reproducible demo run.")
+                st.caption("The supplied completed demo output can also be inspected in the results panel.")
         else:
-            selected_dfn_inputs = st.multiselect(
-                "DFN-prepared GRDECLs to hand off",
-                dfn_inputs,
-                default=dfn_inputs if dfn_approach_name != "Best-fit model" else [dfn_inputs[0]],
-                format_func=lambda path: path.name,
-                key="tab5_dfn_inputs",
-            )
-            st.caption(f"Selected input folder: {display_path(dfn_approach['dfn_dir'])}")
-            st.caption(f"{len(selected_dfn_inputs)} model(s) selected for the future DFN Generator handoff.")
-        st.info("Placeholder only: the dashboard does not yet locate or run Michael's updated DFN Generator executable.")
+            dfn_approach_name, dfn_approach = approach_selector("tab5_approach")
+            dfn_inputs = files_in(dfn_approach["dfn_dir"], ("*.grdecl", "*.GRDECL"))
+            if not dfn_inputs:
+                st.info("No DFN-prepared GRDECLs are available for this approach yet. Create them in Tab 4 first.")
+            else:
+                selected_dfn_inputs = st.multiselect(
+                    "DFN-prepared GRDECLs to run",
+                    dfn_inputs,
+                    default=dfn_inputs if dfn_approach_name != "Best-fit model" else [dfn_inputs[0]],
+                    format_func=lambda path: path.name,
+                    key="tab5_dfn_inputs",
+                )
+                st.caption(f"Selected input folder: {display_path(dfn_approach['dfn_dir'])}")
+                st.caption(f"{len(selected_dfn_inputs)} model(s) selected. Each model receives a reproducible, self-contained run folder.")
+        executable_path = Path(st.text_input("DFM Generator executable", value=str(DEFAULT_DFN_EXECUTABLE), key="tab5_executable_20260807"))
+        if not executable_path.exists():
+            st.warning("Executable not found at this location. Select Michael's `DFMGenerator_GRDECL.exe` before launching.")
+        if selected_dfn_inputs:
+            selected_input = selected_dfn_inputs[0]
+            dims = grdecl_dimensions(str(selected_input))
+            properties = grdecl_property_keywords(selected_input)
+            # Initialise the Tab 5 selectors from the actual GRDECL keywords.
+            # GRDECL keywords are uppercase, whereas the Tab 4 display names are
+            # mixed case; this helper resolves that difference once per session.
+            initialize_tab5_property_defaults(properties)
+            st.caption(f"First selected model: `{selected_input.name}` ({dims[0]} × {dims[1]} × {dims[2]} cells).")
+            if not demo_mode and DFN_DEMO_CONFIG.exists():
+                if st.button("Load Michael's reference settings for this grid", key="tab5_load_reference_config"):
+                    load_dfn_configuration_into_controls(DFN_DEMO_CONFIG, properties)
+                    st.session_state["tab5_allow_cropped_intermediates"] = True
+                    st.success("Michael's numerical reference settings are loaded. Local GRDECL property mappings were retained where the reference uses placeholders, including the 1,000-timestep growth limit.")
+                    st.rerun()
+            estimate_run_root = OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs" if demo_mode else Path(dfn_approach["dfn_run_dir"])
+            crop_run, crop_i, crop_j, crop_k, crop_cells = dfn_crop_controls(dims, str(selected_input), str(estimate_run_root))
+
+            settings_form = st.form("tab5_dfn_settings_form", border=False)
+            # Enter the form before creating the tab containers so all their
+            # widgets defer their values until Apply or Generate is pressed.
+            settings_form.__enter__()
+            settings_tabs = st.tabs(["Main settings", "Mechanical properties", "Microfractures", "Stress state", "Outputs", "Control parameters", "Unconfined fractures"])
+            settings: dict[str, object] = {}
+            with settings_tabs[0]:
+                st.caption("One static deformation episode is configured here. Angles are shown in degrees and written in radians as required by the executable.")
+                main_columns = st.columns(3)
+                settings["time_units"] = main_columns[0].selectbox("Time units", ["ma", "year", "second"], key="tab5_time_units")
+                settings["horizontal_upscale"] = main_columns[1].number_input("Horizontal upscaling factor", min_value=1, value=1, step=1, key="tab5_hup")
+                settings["vertical_upscale"] = main_columns[2].number_input("Vertical upscaling factor (-1 = one amalgamated layer)", min_value=-1, value=-1, step=1, key="tab5_vup")
+                deformation = st.columns(3)
+                settings["ehmin_azimuth_deg"] = deformation[0].number_input("Minimum-strain azimuth (° clockwise from North)", value=0.0, key="tab5_azimuth")
+                settings["ehmin_rate"] = deformation[1].number_input("Minimum horizontal strain rate", value=-0.0001, format="%.6g", key="tab5_ehmin")
+                settings["ehmax_rate"] = deformation[2].number_input("Maximum horizontal strain rate", value=0.0, format="%.6g", key="tab5_ehmax")
+                azimuth_options = ["Use default", *properties]
+                settings["ehmin_azimuth_property"] = st.selectbox(
+                    "Minimum-strain azimuth property (degrees)",
+                    azimuth_options,
+                    index=property_option_index(azimuth_options, "DIPAZIMUTH"),
+                    key="tab5_azimuth_property",
+                    help="Select Tab 4's planar-smoothed DIPAZIMUTH field to use a grid-varying direction. Dashboard values are degrees; the temporary DFN handoff converts them to radians. If no property is selected, the scalar value above is written in radians.",
+                )
+                loads = st.columns(3)
+                settings["episode_duration"] = loads[0].number_input("Episode duration (-1 = until saturation)", value=-1.0, key="tab5_duration")
+                settings["overpressure_bar_ma"] = loads[1].number_input("Overpressure rate (bar/Ma)", value=0.0, key="tab5_overpressure")
+                settings["temperature_change_k_ma"] = loads[2].number_input("Temperature change (K/Ma)", value=0.0, key="tab5_temperature")
+                settings["uplift_rate_m_ma"] = st.number_input("Uplift/erosion rate (m/Ma)", value=0.0, key="tab5_uplift")
+                settings["stress_arching_factor"] = st.slider("Stress arching factor", 0.0, 1.0, 0.0, key="tab5_arching")
+            with settings_tabs[1]:
+                st.caption("Choose a GRDECL property where available; otherwise the supplied default value is written. Young's modulus must be in Pa when a property is selected.")
+                property_options = ["Use default", *properties]
+                mechanical = st.columns(2)
+                settings["youngs_property"] = mechanical[0].selectbox("Young's modulus property (Pa)", property_options, index=property_option_index(property_options, "YoungsModulus_Pa"), key="tab5_young_prop")
+                settings["youngs_default_gpa"] = mechanical[1].number_input("Default Young's modulus (GPa)", min_value=0.01, value=10.0, key="tab5_young_default")
+                settings["poisson_property"] = mechanical[0].selectbox("Poisson's ratio property", property_options, index=property_option_index(property_options, "PoissonsRatio"), key="tab5_poisson_prop")
+                settings["poisson_default"] = mechanical[1].number_input("Default Poisson's ratio", min_value=0.001, max_value=0.499, value=0.25, key="tab5_poisson_default")
+                settings["porosity_property"] = mechanical[0].selectbox("Host-rock porosity property", property_options, index=property_option_index(property_options, "DFNPorosity"), key="tab5_porosity_prop")
+                settings["porosity_default"] = mechanical[1].number_input("Default host-rock porosity", min_value=0.0, max_value=0.9, value=0.2, key="tab5_porosity_default")
+                settings["friction_property"] = mechanical[0].selectbox("Friction coefficient property", property_options, index=property_option_index(property_options, "FrictionCoefficient"), key="tab5_friction_prop")
+                settings["friction_default"] = mechanical[1].number_input("Default friction coefficient", min_value=0.0, max_value=2.0, value=0.5, key="tab5_friction_default")
+                settings["fracture_energy_property"] = mechanical[0].selectbox("Crack surface-energy property", property_options, index=property_option_index(property_options, "FractureEnergy_J_m2"), key="tab5_energy_prop")
+                settings["fracture_energy_default"] = mechanical[1].number_input("Default crack surface energy (J/m²)", min_value=0.1, value=1000.0, key="tab5_energy_default")
+                settings["biot_default"] = st.number_input("Biot coefficient", min_value=0.0, max_value=1.5, value=1.0, key="tab5_biot")
+                settings["thermal_expansion_default"] = st.number_input("Thermal expansion coefficient (/K)", min_value=0.0, value=4e-5, format="%.2e", key="tab5_thermal")
+                settings["rock_relaxation"] = 0.0
+                settings["fracture_relaxation"] = 0.0
+                settings["average_mechanical"] = st.checkbox("Average mechanical properties across K layers", value=True, key="tab5_average_mech")
+                st.info("Tab 4 writes only the current executable inputs: `DFNPorosity`, `DFNEffectiveStress_MPa`, `YoungsModulus_Pa`, `PoissonsRatio`, `FrictionCoefficient`, and `FractureEnergy_J_m2`, plus `GeomechSource` to identify T>Map versus shale-fallback cells.")
+            with settings_tabs[2]:
+                micro = st.columns(2)
+                settings["microfracture_distribution"] = micro[0].selectbox("Initial distribution", ["PowerLaw", "Exponential", "LogNormal"], key="tab5_micro_distribution")
+                settings["microfracture_density"] = micro[1].number_input("Initial microfracture density", min_value=0.0, value=0.001, format="%.6g", key="tab5_micro_density")
+                settings["microfracture_size_distribution"] = micro[0].number_input("Size-distribution coefficient", min_value=0.01, value=3.0, key="tab5_micro_size")
+                settings["microfracture_median_radius"] = micro[1].number_input("Median initial radius (-1 = layer thickness / 20)", value=-1.0, key="tab5_micro_radius")
+                settings["subcritical_index"] = micro[0].number_input("Subcritical propagation index", min_value=0.0, value=10.0, key="tab5_subcritical")
+                settings["critical_rate"] = micro[1].number_input("Critical propagation rate (m/s)", min_value=0.0, value=2000.0, key="tab5_critical_rate")
+            with settings_tabs[3]:
+                stress = st.columns(2)
+                settings["stress_distribution"] = stress[0].selectbox("Stress distribution", ["StressShadow", "EvenlyDistributedStress"], key="tab5_stress_distribution")
+                settings["depth_at_deformation"] = stress[1].number_input("Depth at deformation (-1 = current depth)", value=-1.0, key="tab5_depth_deformation")
+                settings["overburden_density"] = stress[0].number_input("Mean overburden density (kg/m³)", min_value=0.0, value=2250.0, key="tab5_overburden")
+                settings["fluid_density"] = stress[1].number_input("Fluid density (kg/m³)", min_value=0.0, value=1000.0, key="tab5_fluid_density")
+                settings["initial_overpressure_bar"] = stress[0].number_input("Initial fluid overpressure (bar)", value=0.0, key="tab5_initial_overpressure")
+                settings["geothermal_gradient_c_km"] = stress[1].number_input("Geothermal gradient (°C/km)", min_value=0.0, value=30.0, key="tab5_gradient")
+                settings["initial_stress_relaxation"] = st.slider("Initial stress relaxation", -1.0, 1.0, 0.5, key="tab5_initial_relaxation")
+                settings["average_stress"] = st.checkbox("Average stress/strain data across K layers", value=False, key="tab5_average_stress")
+            with settings_tabs[4]:
+                output = st.columns(2)
+                settings["generate_explicit"] = output[0].checkbox("Generate explicit DFN", value=True, key="tab5_explicit")
+                settings["intermediate_outputs"] = output[1].number_input("Intermediate outputs", min_value=0, max_value=20, value=0, step=1, key="tab5_intermediates")
+                settings["allow_cropped_intermediate_outputs"] = st.checkbox(
+                    "Allow multi-timestep cropped tests and intermediate outputs",
+                    value=False,
+                    key="tab5_allow_cropped_intermediates",
+                    help="Keeps the selected Maximum timesteps and intermediate outputs for a crop. Keep this off for a basic compatibility test: the current executable can crash when a crop produces no explicit fractures in an intermediate stage.",
+                )
+                settings["intermediate_control"] = output[0].selectbox("Output interval", ["EqualTime", "EqualArea", "SpecifiedTime"], key="tab5_interval")
+                settings["write_dfn_ascii"] = output[1].checkbox("Write explicit ASCII DFN", value=False, key="tab5_ascii")
+                settings["write_fab"] = output[0].checkbox("Write FAB files", value=True, key="tab5_fab")
+                settings["write_implicit_files"] = output[1].checkbox("Write detailed implicit files", value=False, key="tab5_implicit")
+                settings["output_fracture_sets"] = output[0].checkbox("Output each fracture set", value=True, key="tab5_sets")
+                settings["output_fracture_porosity"] = output[1].checkbox("Output fracture porosity", value=True, key="tab5_porosity_out")
+                settings["output_fracture_permeability"] = output[0].checkbox("Output permeability tensor", value=True, key="tab5_perm_out")
+                settings["populate_empty"] = output[1].checkbox("Populate cells with no fractures", value=True, key="tab5_empty")
+                settings["aperture_control"] = output[0].selectbox("Fracture aperture control", ["Uniform", "SizeDependent", "Dynamic", "BartonBandis"], key="tab5_aperture")
+                settings["uniform_aperture_m"] = output[1].number_input("Uniform aperture (m)", min_value=0.0, value=0.0005, format="%.6f", key="tab5_aperture_value")
+            with settings_tabs[5]:
+                control = st.columns(2)
+                settings["fracture_sets"] = control[0].number_input("Layer-bound fracture sets", min_value=1, max_value=6, value=2, step=1, key="tab5_fracture_sets")
+                settings["max_timesteps"] = control[1].number_input("Maximum timesteps", min_value=1, value=1000, step=1, key="tab5_max_timesteps")
+                settings["mode1_only"] = control[0].checkbox("Mode 1 only", value=False, key="tab5_mode1")
+                settings["mode2_only"] = control[1].checkbox("Mode 2 only", value=False, key="tab5_mode2")
+                settings["max_timestep_duration"] = control[0].number_input("Maximum timestep duration (-1 = automatic)", value=-1.0, key="tab5_max_timestep_duration")
+                settings["max_mfp33_increase"] = control[1].number_input("Maximum MFP33 increase/timestep", min_value=0.00001, value=0.005, format="%.5f", key="tab5_mfp33")
+                settings["radius_bins"] = control[0].number_input("Radius integration bins", min_value=2, value=10, step=1, key="tab5_radius_bins")
+                settings["minimum_clear_zone"] = control[1].number_input("Minimum clear-zone volume ratio", min_value=0.0, max_value=1.0, value=0.01, key="tab5_clear_zone")
+                settings["crop_boundary"] = control[0].checkbox("Crop fractures at outer boundary", value=True, key="tab5_crop_boundary")
+                settings["link_stress_shadows"] = control[1].checkbox("Create relay segments", value=False, key="tab5_relays")
+                settings["max_consistency_angle_deg"] = control[0].number_input("Maximum consistency angle (°)", min_value=0.0, max_value=180.0, value=45.0, key="tab5_consistency")
+                settings["minimum_layer_thickness"] = control[1].number_input("Minimum layer thickness (m)", min_value=0.0, value=0.0, key="tab5_layer_thickness")
+                settings["max_fracture_patches"] = control[0].number_input("Maximum fracture patches/gridblock", min_value=1, value=1000, step=1, key="tab5_patches")
+                settings["search_adjacent"] = control[1].selectbox("Search adjacent cells", ["Automatic", "All", "None"], key="tab5_search")
+                settings["minimum_explicit_microfracture_radius"] = control[0].number_input("Minimum explicit microfracture radius (m; 0 excludes them)", min_value=0.0, value=0.10007, format="%.5f", key="tab5_explicit_radius")
+                settings["microfracture_cornerpoints"] = control[1].number_input("Microfracture polygon cornerpoints", min_value=0, value=8, step=1, key="tab5_micro_corners")
+            with settings_tabs[6]:
+                unconfined = st.columns(2)
+                settings["unconfined_strike_sets"] = unconfined[0].number_input("Unconfined strike sets", min_value=0, value=0, step=1, key="tab5_ucf_strike")
+                settings["unconfined_dip_sets"] = unconfined[1].number_input("Unconfined dip sets", min_value=0, value=0, step=1, key="tab5_ucf_dip")
+                settings["filter_by_property"] = unconfined[0].checkbox("Filter cells by property", value=False, key="tab5_filter")
+                settings["filter_property"] = unconfined[1].selectbox("Filter property", ["Use default", *properties], key="tab5_filter_prop")
+                settings["filter_min"] = unconfined[0].number_input("Filter minimum", value=0.0, key="tab5_filter_min")
+                settings["filter_max"] = unconfined[1].number_input("Filter maximum", value=1.0, key="tab5_filter_max")
+
+            launch_dfn = st.form_submit_button("Generate configuration and run DFN", type="primary", width="stretch", disabled=not executable_path.exists())
+            settings_form.__exit__(None, None, None)
+
+            st.caption("Settings remain pending while you edit, without reloading the dashboard. Generate configuration and run DFN submits and saves the current settings in one step. Runs are detached so Streamlit stays responsive.")
+            if launch_dfn:
+                run_root = (
+                    OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs"
+                    if demo_mode else Path(dfn_approach["dfn_run_dir"])
+                )
+                run_settings = dict(settings)
+                # The current executable throws a NullReferenceException while
+                # creating later stages if a small cropped test generates zero
+                # explicit fractures. Keep this smoke test to one final stage.
+                # Full calibrated runs may use multiple timesteps and outputs.
+                if crop_run:
+                    safeguards: list[str] = []
+                    if int(run_settings.get("intermediate_outputs", 0)) > 0 and not run_settings.get("allow_cropped_intermediate_outputs"):
+                        run_settings["intermediate_outputs"] = 0
+                        safeguards.append("intermediate outputs set to 0 (enable multi-timestep cropped tests under Outputs to keep them)")
+                    if safeguards:
+                        st.warning("Cropped test: " + "; ".join(safeguards) + ". This avoids the executable's empty-stage crash; full calibrated runs may enable them.")
+                launched = []
+                for number, input_grdecl in enumerate(selected_dfn_inputs, start=1):
+                    source_dims = grdecl_dimensions(str(input_grdecl))
+                    source_cells = int(np.prod(source_dims))
+                    run_cells = crop_cells if crop_run else source_cells
+                    run_id = dfn_run_name(input_grdecl, crop_run, run_cells, number)
+                    run_dir = run_root / run_id
+                    input_dir = run_dir / "input"
+                    input_dir.mkdir(parents=True, exist_ok=False)
+                    (run_dir / "run_status.json").write_text(json.dumps({"status": "preparing", "run_id": run_id}, indent=2) + "\n", encoding="utf-8")
+                    # The current DFM executable has a legacy path-length
+                    # limit. Every run folder is already unique, so a short
+                    # internal name is both sufficient and reliable.
+                    grid_path = input_dir / "grid.grdecl"
+                    # The standalone reader expects Petrel-style map metadata.
+                    # Preserve I/J/K geometry exactly.  DionisosFlow's
+                    # I=1, J=MAX, K=MAX export is right-handed in MAPAXES
+                    # coordinates, matching Michael's reference GRDECL. Its
+                    # depths are already positive down, so neither J nor Z is
+                    # re-indexed/inverted during the DFN hand-off.
+                    crop_command = [sys.executable, str(SCRIPTS / "crop_grdecl.py"), str(input_grdecl), str(grid_path), "--i", str(crop_i[0]), str(crop_i[1]), "--j", str(crop_j[0]), str(crop_j[1]), "--k", str(crop_k[0]), str(crop_k[1]), "--dfn-minimal", "--dfn-petrel-style", "--dipazimuth-degrees-to-radians"]
+                    crop_result = subprocess.run(crop_command, cwd=ROOT, capture_output=True, text=True)
+                    if crop_result.returncode != 0:
+                        message = crop_result.stderr or crop_result.stdout or "Unknown hand-off preparation error"
+                        (run_dir / "run_status.json").write_text(json.dumps({"status": "failed", "run_id": run_id, "stage": "prepare_dfn_input", "error": message}, indent=2) + "\n", encoding="utf-8")
+                        st.error(f"Could not prepare {input_grdecl.name} for DFN Generator: {message}")
+                        continue
+                    config_path = run_dir / "dfn_generator_configuration.txt"
+                    config_path.write_text(dfn_config_text(run_id, str(grid_path.relative_to(run_dir)).replace("\\", "/"), run_settings), encoding="utf-8")
+                    # DFMGenerator_GRDECL writes into this relative folder but
+                    # does not create it itself. Create it before launch so a
+                    # completed calculation can persist GRDECL/FAB outputs.
+                    (run_dir / f"{run_id}_output").mkdir(parents=True, exist_ok=True)
+                    manifest = {"run_id": run_id, "approach": dfn_approach_name, "demo_mode": demo_mode, "source_grdecl": str(input_grdecl), "source_cells": source_cells, "run_cells": run_cells, "cropped": crop_run, "petrel_style_handoff": True, "dfn_orientation_transform": {"ijk": "preserved_from_source_grdecl", "depth": "preserved_positive_down", "dipazimuth": "degrees_to_radians"}, "run_grid": str(grid_path), "crop_ranges": {"I": crop_i, "J": crop_j, "K": crop_k}, "settings": run_settings, "executable": str(executable_path)}
+                    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+                    (run_dir / "run_status.json").write_text(json.dumps({"status": "queued", "run_id": run_id}, indent=2) + "\n", encoding="utf-8")
+                    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+                    process = subprocess.Popen([sys.executable, str(SCRIPTS / "run_dfn_generator.py"), "--executable", str(executable_path), "--config", str(config_path), "--run-dir", str(run_dir)], cwd=run_dir, creationflags=flags)
+                    status = dfn_run_status(run_dir)
+                    status.update({"status": "running", "launcher_pid": process.pid})
+                    (run_dir / "run_status.json").write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+                    launched.append(run_id)
+                if launched:
+                    st.session_state["tab5_run_folder"] = run_root / launched[-1]
+                    st.success(f"Launched {len(launched)} DFN run(s): {', '.join(launched)}. The status panel on the right now refreshes every 5 seconds and shows elapsed time plus the live executable log.")
     with right:
-        st.subheader("Recommended integration route")
-        st.markdown("""**Use the updated GRDECL-capable executable as a background process; do not embed the C# solver in Streamlit.**
+        st.subheader("DFN run status")
+        result_source = st.radio("Run source", ["Dashboard run", "Michael's supplied demo output"], horizontal=True, key="tab5_result_source")
+        if result_source == "Michael's supplied demo output":
+            demo_results = files_in(DFN_DEMO_OUTPUT_DIR, ("*.GRDECL", "*.grdecl"))
+            if not DFN_DEMO_GRID.exists() or not demo_results:
+                st.info("No supplied demo GRDECL output was found yet. Run Michael's example, or select Dashboard run after launching a demo from the left.")
+            else:
+                st.success("The supplied demo run is available. Open Tab 6 to inspect its output GRDECL and properties.")
+        else:
+            run_root = (
+                OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs"
+                if demo_mode else Path(dfn_approach["dfn_run_dir"])
+            )
+            run_dirs = sorted([path for path in run_root.iterdir() if path.is_dir()], reverse=True) if run_root.exists() else []
+            if st.button("Refresh run status", key="tab5_refresh"):
+                st.rerun()
+            if not run_dirs:
+                st.info("No dashboard DFN runs exist yet. Generate a configuration on the left to create the first run folder.")
+            else:
+                selected_run = st.selectbox("Run folder", run_dirs, format_func=dfn_run_label, key="tab5_run_folder")
+                status = dfn_run_status(selected_run)
+                dfn_live_status_panel(str(selected_run))
+                active_run = str(status.get("status", "unknown")).lower() in {"queued", "preparing", "running"}
+                delete_confirmed = st.checkbox(
+                    "I want to permanently delete this DFN run and its outputs",
+                    key=f"tab5_delete_confirm_{selected_run.name}",
+                    disabled=active_run,
+                )
+                if st.button(
+                    "Delete selected DFN run",
+                    key=f"tab5_delete_run_{selected_run.name}",
+                    type="secondary",
+                    disabled=active_run or not delete_confirmed,
+                ):
+                    deleted, message = delete_dfn_run(selected_run)
+                    if deleted:
+                        st.session_state.pop("tab5_run_folder", None)
+                        st.rerun()
+                    st.error(message)
+                if active_run:
+                    st.caption("Stop the active run before deleting its folder.")
+                manifest_path = selected_run / "run_manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+                st.caption(f"Input grid: {display_path(Path(manifest.get('run_grid', selected_run)))}")
+                if status.get("status") == "completed":
+                    st.success("Run completed. Open Tab 6 to select and inspect its output GRDECL.")
+        with st.expander("Executable integration notes for Michael", expanded=False):
+            st.markdown("""The dashboard writes the same text configuration structure as the supplied `DFMGenerator_GRDECL_configuration.txt`, invokes `DFMGenerator_GRDECL.exe <configfilename>` through a detached Python runner, and preserves the input crop/copy, configuration, manifest, status and log together. Tab 4 supplies direct selectable GRDECL fields for Young's modulus in Pa, Poisson's ratio, friction and fracture energy. Dynamic stress loads, multiple deformation episodes, cleavages, and full unconfined-fracture settings remain future extensions pending calibration decisions.""")
 
-The inspected legacy standalone program accepts a text configuration file as its first argument, but is a 2D gridblock workflow rather than a GRDECL reader. Michael's updated compiled version is expected to read GRDECL geometry and properties directly, together with its accompanying configuration file. That updated executable should be the integration target.
-
-The dashboard should write a versioned run configuration, launch the executable in a detached background process, and poll its log/status. This keeps the dashboard responsive during multi-hour fracture calculations and preserves a reproducible run record.""")
-        st.subheader("What Tab 4 already provides")
-        st.markdown("""Each selected DFN-prepared GRDECL retains the original grid geometry and facies, plus appended diagenetic properties where available. It also adds:
-
-- Young’s, bulk, and shear modulus;
-- Poisson’s ratio, friction coefficient, cohesion, tensile strength, and fracture energy;
-- `GEOMECHSOURCE` provenance (`1` = T>Map-derived, `2` = shale depth-compaction fallback);
-- optional shale-like fallback estimates where T>Map excluded non-reservoir facies.
-
-T>Map porosity, permeability, cement and effective-stress fields are retained when those were included in the returned dataset.""")
-        st.subheader("Items for Michael to confirm or decide")
-        st.markdown("""- executable location, version, command-line syntax, working-directory requirements, and configuration-file format;
-- GRDECL support: `COORD`/`ZCORN` geometry, I/J/K handling, accepted property names, units, and NoValue convention;
-- required versus optional mechanical inputs, and whether the current cohesion/tensile-strength fields are consumed;
-- deformation episodes: timing, stress or strain tensor, orientation, magnitude, uplift, thermal and fluid-pressure loading, and boundary conditions;
-- fracture-nucleation, propagation, aperture, stress-shadow, random-seed, realisation and uncertainty controls;
-- how non-reservoir/fallback cells should participate in the DFN calculation;
-- expected output files and the properties needed for onward PyThermoGIS or flow modelling.
-
-The dashboard will implement the confirmed executable schema rather than infer these choices.""")
-        with st.expander("Proposed dashboard-to-executable interface for review", expanded=True):
-            st.markdown("""The proposed **Run DFN Executable** action would:
-
-1. validate the selected DFN-prepared GRDECL(s) and required episode settings;
-2. create one self-contained run folder beneath the selected approach;
-3. copy or reference the GRDECL inputs and write the executable’s confirmed configuration file plus a dashboard `run_manifest.json`;
-4. call the updated executable with that configuration file while streaming its console output into a log; and
-5. retain the input references, configuration, logs, and all generated DFN outputs together.
-
-Proposed folder pattern:
-
-`<approach>/05_DFN_generator_runs/<run_id>/input`, `output`, `dfn_run_config.json`, `run_manifest.json`, `stdout.log`, `stderr.log`.
-
-The intended Windows call is conceptually:
-`DFNGenerator.exe --config <run_folder>/dfn_run_config.json`
-
-The executable name and arguments above are placeholders until confirmed against the updated build.""")
-        st.markdown("DFN Generator reference: [JointFlow standalone program](https://github.com/JointFlow/DFNGenerator/tree/main/DFMGenerator_StandaloneProgram)")
+with tab6:
+    st.subheader("Review DFN results")
+    st.caption("Inspect staged DFN GRDECL output independently from the run controls. Continuous properties use their own valid data range, excluding no-value flags.")
+    result_source = st.radio(
+        "Result source",
+        ["Project DFN run", "Dashboard-generated Michael demo run"],
+        horizontal=True,
+        key="tab6_result_source",
+    )
+    if result_source == "Dashboard-generated Michael demo run":
+        review_approach_name = "Dashboard-generated Michael demo"
+        run_root = OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs"
+        result_key_prefix = "tab6_dashboard_demo"
+    else:
+        review_approach_name, review_approach = approach_selector("tab6_approach")
+        run_root = Path(review_approach["dfn_run_dir"])
+        result_key_prefix = "tab6_project"
+    run_dirs = sorted([path for path in run_root.iterdir() if path.is_dir()], reverse=True) if run_root.exists() else []
+    if not run_dirs:
+        if result_source == "Dashboard-generated Michael demo run":
+            st.info("No dashboard-generated Michael demo run is available yet. Create one in Tab 5, then return here to inspect its GRDECL and FAB outputs.")
+        else:
+            st.info(f"No DFN runs are available yet for {review_approach_name}.")
+    else:
+        selected_run = st.selectbox("DFN run folder", run_dirs, format_func=dfn_run_label, key=f"{result_key_prefix}_run_folder")
+        status = dfn_run_status(selected_run)
+        elapsed = dfn_elapsed_text(status)
+        st.caption(f"Run status: {status.get('status', 'unknown')}{f' · elapsed {elapsed}' if elapsed else ''}")
+        manifest_path = selected_run / "run_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+        result_folder = selected_run / f"{manifest.get('run_id', selected_run.name)}_output"
+        result_files = files_in(result_folder, ("*.GRDECL", "*.grdecl"))
+        if result_files and manifest.get("run_grid"):
+            result_file = st.selectbox("DFN output GRDECL", result_files, format_func=lambda path: path.name, key=f"{result_key_prefix}_result_file")
+            result_df = dfn_result_dataframe(str(manifest["run_grid"]), str(result_file), max_rows)
+            visualization_panel(result_df, f"{result_key_prefix}_viewer", result_df.columns[-1] if len(result_df.columns) > 7 else None, is_grdecl=True, dynamic_continuous_scale=True)
+            fab_fracture_viewer(files_in(result_folder, ("*.FAB", "*.fab")), f"{result_key_prefix}_fab")
+        elif status.get("status") == "completed":
+            st.warning("The run completed but no GRDECL result was found. Check the run log in Tab 5 and its output folder.")
+            fab_fracture_viewer(files_in(result_folder, ("*.FAB", "*.fab")), f"{result_key_prefix}_fab")
+        else:
+            st.info("No result GRDECL is available yet. Monitor live execution in Tab 5.")

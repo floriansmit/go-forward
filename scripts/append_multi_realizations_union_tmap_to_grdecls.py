@@ -12,6 +12,35 @@ DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
 DEFAULT_POINTSET_DIR = ROOT / "outputs" / "Multi-realization union approach" / "02_union_pointsets_with_tmap_data"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization union approach" / "03_augmented_grdecls_from_union_lookup"
 NO_VALUE = "-77777"
+IDENTITY_COLUMNS = {"x", "y", "z", "facies", "realization", "cellindex", "point_id", "pointid", "controlcolumn"}
+
+
+def is_pointset_file(path: Path) -> bool:
+    try:
+        found_begin = False
+        with open(path_for_io(path), "r", encoding="utf-8", errors="ignore") as handle:
+            for _ in range(300):
+                line = handle.readline()
+                if not line:
+                    break
+                marker = line.strip()
+                if marker == "BEGIN HEADER":
+                    found_begin = True
+                elif found_begin and marker == "END HEADER":
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def tmap_pointset_files(pointset_dir: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in pointset_dir.iterdir()
+        if path.is_file()
+        and path.suffix.lower() not in {".md", ".xml", ".json", ".png", ".jpg", ".jpeg"}
+        and is_pointset_file(path)
+    )
 
 
 def cell_count(grdecl_path: Path) -> int:
@@ -20,11 +49,13 @@ def cell_count(grdecl_path: Path) -> int:
     return nx * ny * nz
 
 
-def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, dict[int, list[str]]]]:
-    attrs_by_realization: dict[int, dict[int, list[str]]] = defaultdict(dict)
-    property_columns: list[str] | None = None
+def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, dict[int, dict[str, str]]]]:
+    attrs_by_realization: dict[int, dict[int, dict[str, str]]] = defaultdict(dict)
+    property_columns: list[str] = []
+    found_any = False
 
-    for path in sorted(pointset_dir.glob("*_tmap_synthetic")):
+    for path in tmap_pointset_files(pointset_dir):
+        found_any = True
         columns: list[str] = []
         in_header = False
         with path.open("r", encoding="utf-8") as handle:
@@ -46,17 +77,17 @@ def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, 
 
                 if columns[:6] != ["X", "Y", "Z", "Facies", "Realization", "CellIndex"]:
                     raise ValueError(f"{path.name} must contain X,Y,Z,Facies,Realization,CellIndex before T>Map properties")
-                if property_columns is None:
-                    property_columns = columns[6:]
-                elif property_columns != columns[6:]:
-                    raise ValueError(f"{path.name} has different property columns from previous union point sets")
+                property_indices = [(index, column) for index, column in enumerate(columns) if index >= 6 and column.lower() not in IDENTITY_COLUMNS]
+                for _, column in property_indices:
+                    if column not in property_columns:
+                        property_columns.append(column)
 
                 parts = line.split()
                 realization = int(float(parts[4]))
                 cell_index = int(float(parts[5]))
-                attrs_by_realization[realization][cell_index] = parts[6:]
+                attrs_by_realization[realization][cell_index] = {column: parts[index] for index, column in property_indices}
 
-    if property_columns is None:
+    if not found_any:
         raise SystemExit(f"No union T>Map point sets found in {pointset_dir}")
     return property_columns, attrs_by_realization
 
@@ -78,7 +109,7 @@ def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path) ->
             out.write(f"-- Missing cells use Continuous NoValue: {NO_VALUE}\n")
             for attr_index, column in enumerate(property_columns):
                 values = (
-                    attrs_by_cell[cell_index][attr_index] if cell_index in attrs_by_cell else NO_VALUE
+                    attrs_by_cell[cell_index].get(column, NO_VALUE) if cell_index in attrs_by_cell else NO_VALUE
                     for cell_index in range(n_cells)
                 )
                 write_property(out, grdecl_keyword(column), values)

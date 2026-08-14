@@ -15,6 +15,7 @@ DEFAULT_POINTSET_DIR = ROOT / "outputs" / "Best-fit approach" / "02_3d_points_wi
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Best-fit approach" / "03_augmented_grdecls_with_tmap_data"
 NO_VALUE = "-77777"
 MATCH_TOLERANCE_M = 0.05
+IDENTITY_COLUMNS = {"x", "y", "z", "facies", "cellindex", "point_id", "pointid", "realization", "controlcolumn"}
 GRDECL_KEYWORD_ALIASES = {
     "total_porosity_mean": "POROMEAN",
     "total_porosity_stdev": "POROSTD",
@@ -36,6 +37,17 @@ GRDECL_KEYWORD_ALIASES = {
     "total_cements_p50": "TOTCEM50",
     "total_carbonate_cmt_p50": "CARBCEM50",
     "total_clay_cmt_p50": "CLAYCEM50",
+    "time": "TIME",
+    "temperature": "TEMP",
+    "burial_depth": "BURIAL",
+    "effective_stress": "EFFSTRESS",
+    "overpressure": "OVERPRESS",
+    "grain_size_p50": "GRNSIZE50",
+    "grain_sorting_p50": "GRNSORT50",
+    "grain_coating_p50": "GRNCOAT50",
+    "total_porosity_p50": "PORO50",
+    "permeability_p50": "PERM50",
+    "permeability_geomean": "PERMGEOM",
 }
 
 
@@ -167,10 +179,12 @@ def read_pointset(path: Path) -> tuple[list[str], list[tuple[float, float, float
             parts = line.split()
             if len(parts) != len(columns):
                 raise ValueError(f"{path} data row has {len(parts)} values; expected {len(columns)}")
-            rows.append((float(parts[0]), float(parts[1]), float(parts[2]), parts[4:]))
-    if columns[:4] != ["X", "Y", "Z", "Facies"]:
-        raise ValueError(f"{path} has unexpected leading columns: {columns[:4]}")
-    return columns[4:], rows
+            if columns[:3] != ["X", "Y", "Z"]:
+                raise ValueError(f"{path} must begin with X,Y,Z columns")
+            rows.append((float(parts[0]), float(parts[1]), float(parts[2]), parts[3:]))
+    if columns[:3] != ["X", "Y", "Z"]:
+        raise ValueError(f"{path} must begin with X,Y,Z columns")
+    return columns[3:], rows
 
 
 def bucket_key(x: float, y: float, z: float, bucket_size: float = 0.10) -> tuple[int, int, int]:
@@ -214,10 +228,22 @@ def assign_points_to_cells(
     return attrs_by_cell, max_distance
 
 
+def normalized_property_key(column: str) -> str:
+    label = column.split(",", 1)[1].strip() if "," in column else column
+    key = re.sub(r"[^a-z0-9]+", "_", label.strip().strip('"').lower()).strip("_")
+    for unit_suffix in ("_vol", "_area", "_md", "_ma", "_c", "_m", "_mpa"):
+        if key.endswith(unit_suffix):
+            key = key[: -len(unit_suffix)]
+    return key
+
+
 def grdecl_keyword(column: str) -> str:
+    key = normalized_property_key(column)
     if column in GRDECL_KEYWORD_ALIASES:
         return GRDECL_KEYWORD_ALIASES[column]
-    keyword = re.sub(r"[^A-Za-z0-9_]", "_", column).upper()
+    if key in GRDECL_KEYWORD_ALIASES:
+        return GRDECL_KEYWORD_ALIASES[key]
+    keyword = re.sub(r"[^A-Za-z0-9_]", "_", key or column).upper()
     if not keyword:
         raise ValueError(f"Cannot convert empty column name {column!r} to GRDECL keyword")
     return keyword
@@ -238,8 +264,21 @@ def write_property(handle, keyword: str, values, values_per_line: int = 6) -> No
 
 def append_properties(grdecl_path: Path, pointset_path: Path, output_path: Path) -> dict[str, int]:
     columns, point_rows = read_pointset(pointset_path)
+    property_indices = [(index, column) for index, column in enumerate(columns) if column.lower() not in IDENTITY_COLUMNS]
+    if not property_indices:
+        raise ValueError(f"{pointset_path.name} has no returned T>Map properties")
     centers = grdecl_cell_centers(grdecl_path)
-    attrs_by_cell, max_distance = assign_points_to_cells(centers, point_rows)
+    cell_index_attr = next((index for index, column in enumerate(columns) if column.lower() == "cellindex"), None)
+    if cell_index_attr is not None:
+        attrs_by_cell: list[list[str] | None] = [None] * len(centers)
+        for _, _, _, attrs in point_rows:
+            cell_index = int(float(attrs[cell_index_attr]))
+            if cell_index < 0 or cell_index >= len(attrs_by_cell):
+                raise ValueError(f"{pointset_path.name} has CellIndex {cell_index}; valid range is 0..{len(attrs_by_cell) - 1}")
+            attrs_by_cell[cell_index] = attrs
+        max_distance = 0.0
+    else:
+        attrs_by_cell, max_distance = assign_points_to_cells(centers, point_rows)
     matched = sum(attrs is not None for attrs in attrs_by_cell)
 
     Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
@@ -248,12 +287,12 @@ def append_properties(grdecl_path: Path, pointset_path: Path, output_path: Path)
         out.write("\n-- Synthetic T>Map-style properties mapped from a 3D point set.\n")
         out.write(f"-- Source point set: {pointset_path.name}\n")
         out.write(f"-- Missing cells use Continuous NoValue: {NO_VALUE}\n")
-        for attr_index, column in enumerate(columns):
+        for attr_index, column in property_indices:
             keyword = grdecl_keyword(column)
             values = (attrs[attr_index] if attrs is not None else NO_VALUE for attrs in attrs_by_cell)
             write_property(out, keyword, values)
 
-    return {"cells": len(centers), "points": len(point_rows), "matched": matched, "properties": len(columns), "max_distance": max_distance}
+    return {"cells": len(centers), "points": len(point_rows), "matched": matched, "properties": len(property_indices), "max_distance": max_distance}
 
 
 def read_tmap_table(path: Path) -> tuple[list[str], list[list[str]]]:
@@ -293,8 +332,7 @@ def append_column_interpolated_properties(grdecl_path: Path, pointset_path: Path
     never overwrite the original GRDECL facies property.
     """
     columns, rows = read_tmap_table(pointset_path)
-    excluded = {"x", "y", "z", "facies", "point_id", "cellindex"}
-    property_indices = [(index, name) for index, name in enumerate(columns) if name.lower() not in excluded]
+    property_indices = [(index, name) for index, name in enumerate(columns) if name.lower() not in IDENTITY_COLUMNS]
     if not property_indices:
         raise ValueError(f"{pointset_path.name} has no T>Map properties to append")
 
@@ -380,21 +418,30 @@ def scenario_token(path: Path) -> str:
 
 def find_pointset_for_grdecl(grdecl_path: Path, pointset_dir: Path, reduced: bool = False) -> Path:
     token = scenario_token(grdecl_path)
-    candidates = [
-        p
-        for p in pointset_dir.glob("*_3d_pointset_control_*_tmap_synthetic" if reduced else "*_3d_pointset_tmap_synthetic")
-        if scenario_token(p).replace("ss_201_cleaned_5", "ss_201_5").startswith(token)
-    ]
+    primary_patterns = (
+        ["*_3d_pointset_control_*_tmap_synthetic", "*_3d_pointset_control_*_tmap_real*"]
+        if reduced
+        else ["*_3d_pointset_tmap_synthetic", "*_3d_pointset_tmap_real*", "*_3d_pointset_tmap_inferred_geocosm"]
+    )
+    candidates = []
+    for pattern in primary_patterns:
+        candidates.extend(
+            p for p in pointset_dir.glob(pattern)
+            if scenario_token(p).replace("ss_201_cleaned_5", "ss_201_5").startswith(token)
+        )
     if not candidates:
         # Legacy fallback for existing synthetic files; new exports use _3d_pointset.
-        candidates = [p for p in pointset_dir.glob("*_tmap_synthetic") if scenario_token(p).replace("ss_201_cleaned_5", "ss_201_5").startswith(token)]
+        candidates = [
+            p for p in pointset_dir.glob("*_tmap_*")
+            if scenario_token(p).replace("ss_201_cleaned_5", "ss_201_5").startswith(token)
+        ]
     if not candidates:
         # Fallback to the scenario suffix, e.g. "1_Base" or "4_MinSupply".
         parts = token.split("_fsm_fdm_")
         suffix = parts[-1] if len(parts) > 1 else token
-        candidates = [p for p in pointset_dir.glob(f"*{suffix}*_3d_pointset_tmap_synthetic")]
+        candidates = [p for p in pointset_dir.glob(f"*{suffix}*_3d_pointset_tmap_*")]
         if not candidates:
-            candidates = [p for p in pointset_dir.glob(f"*{suffix}*_tmap_synthetic")]
+            candidates = [p for p in pointset_dir.glob(f"*{suffix}*_tmap_*")]
     if len(candidates) != 1:
         raise ValueError(f"Could not uniquely match {grdecl_path.name} to a point set; candidates: {[p.name for p in candidates]}")
     return candidates[0]
@@ -407,10 +454,11 @@ def append_interpolated_properties(grdecl_path: Path, pointset_path: Path, outpu
         append_column_interpolated_properties(grdecl_path, pointset_path, output_path)
         return
     columns, rows = read_pointset(pointset_path)
-    if not columns or columns[0] != "CellIndex":
+    cell_index_attr = next((index for index, column in enumerate(columns) if column.lower() == "cellindex"), None)
+    if cell_index_attr is None:
         raise ValueError(f"{pointset_path.name} must retain CellIndex after Facies for reduced Best-fit interpolation")
-    properties = columns[1:]
-    if not properties:
+    property_indices = [(index, column) for index, column in enumerate(columns) if column.lower() not in IDENTITY_COLUMNS]
+    if not property_indices:
         raise ValueError(f"{pointset_path.name} has no returned T>Map properties")
     table = defaultdict(list)
     for x, y, z, attrs in rows:
@@ -429,25 +477,28 @@ def append_interpolated_properties(grdecl_path: Path, pointset_path: Path, outpu
             if not line or line.startswith("#") or line == "VERSION 1": continue
             raw_rows.append(line.split())
     for parts in raw_rows:
-        facies = int(float(parts[3])); x, y, z = map(float, parts[:3])
-        table[(facies, f"{x:.2f}", f"{y:.2f}")].append((z, parts[5:]))
+        facies_index = next(index for index, column in enumerate(raw_columns) if column.lower() == "facies")
+        x, y, z = map(float, parts[:3])
+        facies = int(float(parts[facies_index]))
+        table[(facies, f"{x:.2f}", f"{y:.2f}")].append((z, parts))
     for series in table.values(): series.sort(key=lambda item: item[0])
     centers = grdecl_cell_centers(grdecl_path)
     facies_values = [int(float(value)) for value in tokenize_grdecl(grdecl_path, {facies_property})[facies_property] for value in ([value.split('*', 1)[1]] * int(value.split('*', 1)[0]) if '*' in value else [value])]
     Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
     with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
         out.write(source.read().rstrip() + "\n\n-- T>Map properties vertically interpolated from reduced Best-fit points.\n")
-        for attr_index, column in enumerate(properties):
+        for attr_index, column in property_indices:
             values = []
             for (x, y, z), facies in zip(centers, facies_values):
                 series = table.get((facies, f"{x:.2f}", f"{y:.2f}"))
                 if not series: values.append(NO_VALUE); continue
                 zs = [item[0] for item in series]; pos = bisect.bisect_left(zs, z)
-                if pos == 0: value = series[0][1][attr_index]
-                elif pos == len(zs): value = series[-1][1][attr_index]
+                raw_index = attr_index + 3
+                if pos == 0: value = series[0][1][raw_index]
+                elif pos == len(zs): value = series[-1][1][raw_index]
                 else:
                     z0, a0 = series[pos - 1]; z1, a1 = series[pos]
-                    value = f"{float(a0[attr_index]) + (z-z0)/(z1-z0)*(float(a1[attr_index])-float(a0[attr_index])):.6g}"
+                    value = f"{float(a0[raw_index]) + (z-z0)/(z1-z0)*(float(a1[raw_index])-float(a0[raw_index])):.6g}"
                 values.append(value)
             write_property(out, grdecl_keyword(column), values)
 

@@ -18,7 +18,7 @@ from grdecl_utils import grdecl_cell_centers, path_for_io, tokenize_grdecl
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GRDECL = ROOT / "input" / "source_grdecls_from_dionisosflow" / "SS_201.5_1xBath_1xThSub_ConS_FSM-FDM-1-Base.grdecl"
-DEFAULT_EXPORT = ROOT / "original_data" / "tmap_example_data" / "point set test, export, combined - 20260714.txt"
+DEFAULT_EXPORT = ROOT / "reference_examples" / "tmap_example" / "gassum_base_tmap.txt"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "geocosm_handoff"
 
 

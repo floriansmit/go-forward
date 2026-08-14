@@ -13,6 +13,35 @@ DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
 DEFAULT_POINTSET_DIR = ROOT / "outputs" / "Multi-realization Uber approach" / "02_uber_pointsets_with_tmap_data"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization Uber approach" / "03_augmented_grdecls_from_uber_lookup"
 NO_VALUE = "-77777"
+IDENTITY_COLUMNS = {"x", "y", "z", "facies", "realization", "cellindex", "point_id", "pointid", "controlcolumn"}
+
+
+def is_pointset_file(path: Path) -> bool:
+    try:
+        found_begin = False
+        with open(path_for_io(path), "r", encoding="utf-8", errors="ignore") as handle:
+            for _ in range(300):
+                line = handle.readline()
+                if not line:
+                    break
+                marker = line.strip()
+                if marker == "BEGIN HEADER":
+                    found_begin = True
+                elif found_begin and marker == "END HEADER":
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def tmap_pointset_files(pointset_dir: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in pointset_dir.iterdir()
+        if path.is_file()
+        and path.suffix.lower() not in {".md", ".xml", ".json", ".png", ".jpg", ".jpeg"}
+        and is_pointset_file(path)
+    )
 
 
 def expanded_facies_values(path: Path, keyword: str = "Facies") -> list[int]:
@@ -28,10 +57,12 @@ def expanded_facies_values(path: Path, keyword: str = "Facies") -> list[int]:
 
 
 def read_uber_tmap_pointsets(pointset_dir: Path):
-    property_columns: list[str] | None = None
+    property_columns: list[str] = []
     table = defaultdict(lambda: defaultdict(list))
+    found_any = False
 
-    for path in sorted(pointset_dir.glob("*_tmap_synthetic")):
+    for path in tmap_pointset_files(pointset_dir):
+        found_any = True
         columns: list[str] = []
         in_header = False
         with path.open("r", encoding="utf-8") as handle:
@@ -50,18 +81,19 @@ def read_uber_tmap_pointsets(pointset_dir: Path):
                     continue
                 if line.startswith("#") or line == "VERSION 1":
                     continue
-                if columns[:4] != ["X", "Y", "Z", "Facies"]:
-                    raise ValueError(f"{path.name} must contain X,Y,Z,Facies before T>Map properties")
-                if property_columns is None:
-                    property_columns = columns[4:]
-                elif property_columns != columns[4:]:
-                    raise ValueError(f"{path.name} has different property columns from previous Uber point sets")
+                if columns[:3] != ["X", "Y", "Z"] or "Facies" not in columns:
+                    raise ValueError(f"{path.name} must contain X,Y,Z and a Facies column")
+                facies_index = columns.index("Facies")
+                property_indices = [(index, column) for index, column in enumerate(columns) if column.lower() not in IDENTITY_COLUMNS]
+                for _, column in property_indices:
+                    if column not in property_columns:
+                        property_columns.append(column)
                 parts = line.split()
                 x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
-                facies = int(float(parts[3]))
-                table[facies][(f"{x:.2f}", f"{y:.2f}")].append((z, parts[4:]))
+                facies = int(float(parts[facies_index]))
+                table[facies][(f"{x:.2f}", f"{y:.2f}")].append((z, {column: parts[index] for index, column in property_indices}))
 
-    if property_columns is None:
+    if not found_any:
         raise SystemExit(f"No Uber T>Map point sets found in {pointset_dir}")
 
     for xy_table in table.values():
@@ -70,20 +102,23 @@ def read_uber_tmap_pointsets(pointset_dir: Path):
     return property_columns, table
 
 
-def interpolate(values: list[tuple[float, list[str]]], z: float, attr_index: int, no_extrapolate: bool) -> str:
-    zs = [item[0] for item in values]
+def interpolate(values: list[tuple[float, dict[str, str]]], z: float, column: str, no_extrapolate: bool) -> str:
+    available = [(sample_z, attrs[column]) for sample_z, attrs in values if column in attrs]
+    if not available:
+        return NO_VALUE
+    zs = [item[0] for item in available]
     pos = bisect.bisect_left(zs, z)
     if pos < len(zs) and abs(zs[pos] - z) < 1e-9:
-        return values[pos][1][attr_index]
+        return available[pos][1]
     if pos == 0:
-        return NO_VALUE if no_extrapolate else values[0][1][attr_index]
+        return NO_VALUE if no_extrapolate else available[0][1]
     if pos == len(zs):
-        return NO_VALUE if no_extrapolate else values[-1][1][attr_index]
+        return NO_VALUE if no_extrapolate else available[-1][1]
 
-    z0, attrs0 = values[pos - 1]
-    z1, attrs1 = values[pos]
-    v0 = float(attrs0[attr_index])
-    v1 = float(attrs1[attr_index])
+    z0, value0 = available[pos - 1]
+    z1, value1 = available[pos]
+    v0 = float(value0)
+    v1 = float(value1)
     fraction = (z - z0) / (z1 - z0)
     return f"{v0 + fraction * (v1 - v0):.6g}"
 
@@ -111,9 +146,9 @@ def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, no
             out.write("\n-- T>Map-style properties interpolated from Uber facies point sets.\n")
             out.write(f"-- Source point-set folder: {pointset_dir}\n")
             out.write(f"-- Missing cells use Continuous NoValue: {NO_VALUE}\n")
-            for attr_index, column in enumerate(property_columns):
+            for column in property_columns:
                 values = (
-                    interpolate(series, z, attr_index, no_extrapolate) if series else NO_VALUE
+                    interpolate(series, z, column, no_extrapolate) if series else NO_VALUE
                     for z, series in per_cell_series
                 )
                 write_property(out, grdecl_keyword(column), values)

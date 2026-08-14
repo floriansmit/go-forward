@@ -13,6 +13,35 @@ DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
 DEFAULT_POINTSET_DIR = ROOT / "outputs" / "Multi-realization control approach" / "02_control_pointsets_with_tmap_data"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization control approach" / "03_augmented_grdecls_from_control_interpolation"
 NO_VALUE = "-77777"
+IDENTITY_COLUMNS = {"x", "y", "z", "facies", "realization", "cellindex", "point_id", "pointid", "controlcolumn"}
+
+
+def is_pointset_file(path: Path) -> bool:
+    try:
+        found_begin = False
+        with open(path_for_io(path), "r", encoding="utf-8", errors="ignore") as handle:
+            for _ in range(300):
+                line = handle.readline()
+                if not line:
+                    break
+                marker = line.strip()
+                if marker == "BEGIN HEADER":
+                    found_begin = True
+                elif found_begin and marker == "END HEADER":
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def tmap_pointset_files(pointset_dir: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in pointset_dir.iterdir()
+        if path.is_file()
+        and path.suffix.lower() not in {".md", ".xml", ".json", ".png", ".jpg", ".jpeg"}
+        and is_pointset_file(path)
+    )
 
 
 def dimensions(path: Path) -> tuple[int, int, int]:
@@ -33,9 +62,11 @@ def expanded_facies(path: Path, keyword: str) -> list[int]:
 
 
 def read_control_pointsets(pointset_dir: Path):
-    properties: list[str] | None = None
+    properties: list[str] = []
     table = defaultdict(list)
-    for path in sorted(pointset_dir.glob("*_tmap_synthetic")):
+    found_any = False
+    for path in tmap_pointset_files(pointset_dir):
+        found_any = True
         columns: list[str] = []
         in_header = False
         with path.open("r", encoding="utf-8") as handle:
@@ -67,36 +98,39 @@ def read_control_pointsets(pointset_dir: Path):
                         f"{path.name} must contain X,Y,Z,Facies,ControlColumn before T>Map properties "
                         "(or the legacy Realization,CellIndex fields)"
                     )
-                if properties is None:
-                    properties = columns[property_start:]
-                elif properties != columns[property_start:]:
-                    raise ValueError(f"{path.name} has different property columns")
+                property_indices = [(index, column) for index, column in enumerate(columns) if index >= property_start and column.lower() not in IDENTITY_COLUMNS]
+                for _, column in property_indices:
+                    if column not in properties:
+                        properties.append(column)
                 x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
                 facies = int(float(parts[3]))
                 key = (realization, facies, f"{x:.2f}", f"{y:.2f}")
-                table[key].append((z, parts[property_start:]))
-    if properties is None:
+                table[key].append((z, {column: parts[index] for index, column in property_indices}))
+    if not found_any:
         raise SystemExit(f"No control T>Map point sets found in {pointset_dir}")
     for values in table.values():
         values.sort(key=lambda item: item[0])
     return properties, table
 
 
-def interpolate(series, z: float, attr_index: int, no_extrapolate: bool) -> str:
-    zs = [item[0] for item in series]
+def interpolate(series, z: float, column: str, no_extrapolate: bool) -> str:
+    available = [(sample_z, attrs[column]) for sample_z, attrs in series if column in attrs]
+    if not available:
+        return NO_VALUE
+    zs = [item[0] for item in available]
     pos = bisect.bisect_left(zs, z)
     if pos < len(zs) and abs(zs[pos] - z) < 1e-9:
-        return series[pos][1][attr_index]
+        return available[pos][1]
     if pos == 0:
-        return NO_VALUE if no_extrapolate else series[0][1][attr_index]
+        return NO_VALUE if no_extrapolate else available[0][1]
     if pos == len(zs):
-        return NO_VALUE if no_extrapolate else series[-1][1][attr_index]
-    z0, attrs0 = series[pos - 1]
-    z1, attrs1 = series[pos]
+        return NO_VALUE if no_extrapolate else available[-1][1]
+    z0, value0 = available[pos - 1]
+    z1, value1 = available[pos]
     if abs(z1 - z0) < 1e-12:
-        return attrs0[attr_index]
+        return value0
     fraction = (z - z0) / (z1 - z0)
-    return f"{float(attrs0[attr_index]) + fraction * (float(attrs1[attr_index]) - float(attrs0[attr_index])):.6g}"
+    return f"{float(value0) + fraction * (float(value1) - float(value0)):.6g}"
 
 
 def main() -> None:
@@ -122,7 +156,7 @@ def main() -> None:
             out.write("\n-- T>Map properties interpolated from reduced facies control point sets.\n")
             out.write(f"-- Source point-set folder: {args.pointset_dir}\n")
             out.write(f"-- Missing cells use Continuous NoValue: {NO_VALUE}\n")
-            for attr_index, column in enumerate(properties):
+            for column in properties:
                 values = []
                 for (x, y, z), facies in zip(centers, facies_values):
                     # New shared-envelope controls are keyed with realization 0
@@ -131,7 +165,7 @@ def main() -> None:
                     series = table.get((0, facies, f"{x:.2f}", f"{y:.2f}")) or table.get(
                         (realization_index, facies, f"{x:.2f}", f"{y:.2f}")
                     )
-                    values.append(interpolate(series, z, attr_index, args.no_extrapolate) if series else NO_VALUE)
+                    values.append(interpolate(series, z, column, args.no_extrapolate) if series else NO_VALUE)
                 write_property(out, grdecl_keyword(column), values)
         print(f"{grdecl.name} -> {output_path}")
 

@@ -32,14 +32,16 @@ SCRIPTS = ROOT / "scripts"
 INPUT_ROOT = ROOT / "input"
 OUTPUT_ROOT = ROOT / "outputs"
 DEFAULT_PROJECT_NAME = "SS_201_Gassum_V0"
-DFN_REFERENCE_DIR = ROOT / "original_data" / "dfn_generator_reference" / "20260728_DFN_Generator_GRDECL"
-# Keep the original reference folder for Michael's template/configuration and
-# demo files. The MAPAXES-aware executable is versioned with the dashboard
-# scripts so a cloned workflow has one clear runnable location.
+REFERENCE_EXAMPLES_DIR = ROOT / "reference_examples"
+TMAP_EXAMPLE_FILE = REFERENCE_EXAMPLES_DIR / "tmap_example" / "gassum_base_tmap.txt"
+MICHAEL_DFN_EXAMPLE_DIR = REFERENCE_EXAMPLES_DIR / "michael_dfn_example"
+# Keep only the compact reference examples at the repository root. The
+# MAPAXES-aware executable is versioned with the dashboard scripts so a cloned
+# workflow has one clear runnable location.
 DEFAULT_DFN_EXECUTABLE = SCRIPTS / "DFMGenerator_GRDECL.exe"
-DFN_DEMO_GRID = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest.GRDECL"
-DFN_DEMO_CONFIG = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest.txt"
-DFN_DEMO_OUTPUT_DIR = DFN_REFERENCE_DIR / "examples" / "FaultedGridGeometryPropertyTest_output"
+DFN_DEMO_GRID = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest.GRDECL"
+DFN_DEMO_CONFIG = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest.txt"
+DFN_DEMO_OUTPUT_DIR = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest_output"
 
 
 def approaches_for_project(project_output_dir: Path) -> dict[str, dict[str, Path | list[list[str]]]]:
@@ -125,6 +127,16 @@ DEFAULT_FACIES_NAMES = {
     9: "FA4b Fluvial, tidal influenced",
     10: "FA5 Floodplain lacustrine",
 }
+
+
+def is_depth_property(property_key: str) -> bool:
+    """Treat depth-like scalar properties as shallow-yellow to deep-blue/purple."""
+    key = re.sub(r"[^a-z0-9]+", "_", property_key.lower()).strip("_")
+    return "depth" in key or key in {"burial", "burial_m"}
+
+
+def continuous_color_scale(property_key: str):
+    return "Viridis_r" if is_depth_property(property_key) else "Viridis"
 
 
 def default_facies_color(position: int) -> str:
@@ -468,7 +480,7 @@ def plot_map_with_cells(
                     x=[row["X0"], row["X1"], row["X2"], row["X3"], row["X0"]],
                     y=[row["Y0"], row["Y1"], row["Y2"], row["Y3"], row["Y0"]],
                     fill="toself",
-                    fillcolor=px.colors.sample_colorscale("Viridis", fraction)[0],
+                    fillcolor=px.colors.sample_colorscale(continuous_color_scale(color_column), fraction)[0],
                     line={"color": "white", "width": 0.5},
                     hovertemplate=f"<b>{color_column}: {color_val:.2f}</b><br>I,J,K: {int(row['I'])},{int(row['J'])},{int(row['K'])}<extra></extra>",
                     showlegend=False,
@@ -594,7 +606,7 @@ def plot_section_with_cells(
             bins = np.clip(((values - low) / (high - low) * 127).astype(int), 0, 127)
         for bucket in np.unique(bins):
             fraction = (int(bucket) + 0.5) / 128
-            color = px.colors.sample_colorscale("Viridis", fraction)[0]
+            color = px.colors.sample_colorscale(continuous_color_scale(color_column), fraction)[0]
             add_cells(work[bins == bucket], color_column, color, False)
 
     fig.update_layout(
@@ -656,6 +668,51 @@ def is_tmap_pointset_file(path: Path) -> bool:
     except OSError:
         return False
     return False
+
+
+def pointset_data_row_count(path: Path) -> int | None:
+    """Count data rows in a Petrel/T>Map pointset without parsing all values."""
+    try:
+        columns_seen = False
+        count = 0
+        with open(path_for_io(path), "r", encoding="utf-8", errors="ignore") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line:
+                    continue
+                if line == "END HEADER":
+                    columns_seen = True
+                    continue
+                if not columns_seen or line.startswith("#") or line == "VERSION 1":
+                    continue
+                count += 1
+        return count
+    except OSError:
+        return None
+
+
+def tmap_pointset_columns(path: Path) -> tuple[str, ...]:
+    """Read the visible column names from a Petrel/T>Map pointset header."""
+    columns: list[str] = []
+    try:
+        in_header = False
+        with open(path_for_io(path), "r", encoding="utf-8", errors="ignore") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if line == "BEGIN HEADER":
+                    in_header = True
+                    continue
+                if line == "END HEADER":
+                    break
+                if in_header:
+                    columns.append(line.split(",", 1)[-1].strip().strip('"'))
+    except OSError:
+        return ()
+    return tuple(columns)
+
+
+def tmap_pointset_has_column(path: Path, column_name: str) -> bool:
+    return any(column.lower() == column_name.lower() for column in tmap_pointset_columns(path))
 
 
 def display_path(path: Path) -> str:
@@ -1513,6 +1570,9 @@ def normalized_pointset_name(value: str) -> str:
     name = name.replace("_reservoirgrid", "")
     name = name.replace("ss_201_cleaned.5", "ss_201.5")
     name = name.replace("ss_201_cleaned_5", "ss_201_5")
+    for suffix in ("_tmap_synthetic", "_tmap_real", "_tmap_inferred_geocosm"):
+        if suffix in name:
+            name = name.split(suffix, 1)[0]
     return name
 
 
@@ -1533,10 +1593,13 @@ def tmap_header_source_pointset_names(path_text: str) -> tuple[str, ...]:
                 if not line.lstrip().startswith("#"):
                     continue
                 # T>Map's run comments separate the TCF, pointset and mode
-                # with commas. Capture every segment ending in .txt.
+                # with commas. The pointset segment may be a bare dataset name
+                # such as `gassum_base_3d`, not necessarily a `.txt` file.
                 for segment in line[1:].split(","):
                     candidate = segment.strip().strip('"\'')
                     if candidate.lower().endswith(".txt"):
+                        names.append(Path(candidate).name)
+                    elif candidate and ".tcf" not in candidate.lower() and "simulate " not in candidate.lower():
                         names.append(Path(candidate).name)
     except OSError:
         return ()
@@ -1544,7 +1607,7 @@ def tmap_header_source_pointset_names(path_text: str) -> tuple[str, ...]:
 
 
 def source_pointset_for_returned(returned: Path, source_pointsets: list[Path]) -> Path | None:
-    """Match a returned T>Map file by header provenance, then by its filename."""
+    """Match a returned T>Map file by provenance, filename, or unique row count."""
     by_identity: dict[str, list[Path]] = {}
     for pointset in source_pointsets:
         by_identity.setdefault(normalized_pointset_name(pointset.name), []).append(pointset)
@@ -1562,38 +1625,26 @@ def source_pointset_for_returned(returned: Path, source_pointsets: list[Path]) -
         if len(legacy_matches) == 1:
             return legacy_matches[0]
     fallback = [pointset for pointset in source_pointsets if returned.name.startswith(pointset.name)]
-    return max(fallback, key=lambda path: len(path.name)) if fallback else None
+    if fallback:
+        return max(fallback, key=lambda path: len(path.name))
+    returned_rows = pointset_data_row_count(returned)
+    if returned_rows is not None:
+        row_matches = [pointset for pointset in source_pointsets if pointset_data_row_count(pointset) == returned_rows]
+        if len(row_matches) == 1:
+            return row_matches[0]
+    if len(source_pointsets) == 1 and is_tmap_pointset_file(returned):
+        return source_pointsets[0]
+    return None
 
 
 def standardize_returned_tmap_names(returned_files: list[Path], source_pointsets: list[Path]) -> list[tuple[str, str]]:
-    """Rename provenance-matched real T>Map returns to the project convention.
+    """Keep real T>Map return filenames intact.
 
-    Synthetic/inferred files already have a controlled name and are never
-    touched.  Only a file with an unambiguous T>Map header source reference is
-    renamed, so arbitrary File1.txt deliveries remain safe until identifiable.
+    Earlier MVP builds renamed matched real exports to an internal suffix. The
+    dashboard can now match arbitrary real filenames directly, which is clearer
+    when Geocosm returns named files such as `gassum_base_tmap.txt`.
     """
-    renamed: list[tuple[str, str]] = []
-    for returned in returned_files:
-        if "_tmap_synthetic" in returned.name or "_tmap_inferred_geocosm" in returned.name:
-            continue
-        source = source_pointset_for_returned(returned, source_pointsets)
-        if source is None:
-            continue
-        target = returned.with_name(f"{source.name}_tmap_real")
-        if returned == target:
-            continue
-        number = 2
-        while target.exists():
-            target = returned.with_name(f"{source.name}_tmap_real_{number}")
-            number += 1
-        try:
-            returned.rename(target)
-            renamed.append((returned.name, target.name))
-        except OSError:
-            # A synchronized folder can temporarily lock a file. Leave it
-            # available under its original name and retry on the next reload.
-            continue
-    return renamed
+    return []
 
 
 def source_grdecl_for_pointset(pointset: Path, source_dir: Path, source_pointsets: list[Path] | None = None) -> Path | None:
@@ -1808,7 +1859,13 @@ def plot_3d_points(
         if "perm" in color_column.lower():
             colour = np.log10(colour.clip(lower=1e-12))
             colour_title = f"{color_column} (log10 mD)"
-        marker = {"size": 2, "color": colour, "colorscale": "Viridis", "showscale": True, "colorbar": {"title": colour_title}}
+        marker = {
+            "size": 2,
+            "color": colour,
+            "colorscale": continuous_color_scale(color_column),
+            "showscale": True,
+            "colorbar": {"title": colour_title},
+        }
         if continuous_limits is not None:
             marker.update({"cmin": continuous_limits[0], "cmax": continuous_limits[1]})
         metadata_columns = [column for column in ("I", "J", "K", "CellIndex") if column in df.columns]
@@ -2480,7 +2537,7 @@ def plot_map(
             hover_data=[col for col in ("I", "J", "K", "Z", "CellIndex", "Realization", "Facies") if col in df.columns],
             render_mode="webgl",
             title=title,
-            color_continuous_scale="Viridis" if pd.api.types.is_numeric_dtype(df[color_column]) else None,
+            color_continuous_scale=continuous_color_scale(color_column) if pd.api.types.is_numeric_dtype(df[color_column]) else None,
             range_color=color_range,
         )
         fig.update_layout(height=560, margin=dict(l=10, r=10, t=45, b=10), yaxis_scaleanchor="x")
@@ -2575,7 +2632,7 @@ def plot_section(df: pd.DataFrame, color_column: str, axis_mode: str, selector: 
             hover_data=[col for col in ("I", "J", "K", "X", "Y", "CellIndex", "Facies") if col in work.columns],
             render_mode="webgl",
             title=f"{axis_mode}: {selector}",
-            color_continuous_scale="Viridis" if pd.api.types.is_numeric_dtype(work[color_column]) else None,
+            color_continuous_scale=continuous_color_scale(color_column) if pd.api.types.is_numeric_dtype(work[color_column]) else None,
             range_color=color_range,
         )
         fig.update_layout(height=560, margin=dict(l=10, r=10, t=45, b=10), xaxis_title=x_axis_label, yaxis_title="Z (depth)")
@@ -3373,11 +3430,10 @@ with tab2:
                     if source_grdecl is None:
                         st.error(f"Could not identify the source GRDECL for {returned_file.name}.")
                         continue
-                    # Real T>Map returns can be vertically sampled even when
-                    # their historical name does not carry `_control_`. Their
-                    # header/columns determine the sparse X/Y/Z interpolation
-                    # path in the append script.
-                    reduced_file = "_control_" in returned_file.name or "_tmap_real" in returned_file.name
+                    # Prefer exact CellIndex mapping for current T>Map returns.
+                    # Older real exports without CellIndex use sparse X/Y/Z
+                    # vertical interpolation.
+                    reduced_file = "_control_" in returned_file.name or not tmap_pointset_has_column(returned_file, "CellIndex")
                     extra = ["--single-grdecl", str(source_grdecl), "--single-pointset", str(returned_file)]
                     if reduced_file:
                         extra.extend(["--vertical-interpolate", "--property", "Facies"])
@@ -3587,12 +3643,12 @@ with tab5:
             dfn_approach_name = "Michael demo grid"
             dfn_approach = None
             if not DFN_DEMO_GRID.exists() or not DFN_DEMO_CONFIG.exists():
-                st.error("Michael's demo grid or configuration file is not available in `original_data/dfn_generator_reference`.")
+                st.error("Michael's demo grid or configuration file is not available in `reference_examples/michael_dfn_example`.")
             else:
                 selected_dfn_inputs = [DFN_DEMO_GRID]
                 demo_properties = grdecl_property_keywords(DFN_DEMO_GRID)
                 st.caption(f"Demo grid: `{DFN_DEMO_GRID.name}`. Configuration: `{DFN_DEMO_CONFIG.name}`.")
-                if st.button("Load Michael's configuration into the controls", key="tab5_load_demo_config"):
+                if st.button("Load default settings from Michael's example file", key="tab5_load_demo_config"):
                     load_dfn_configuration_into_controls(DFN_DEMO_CONFIG, demo_properties)
                     st.session_state["tab5_demo_configuration_loaded"] = True
                     st.rerun()
@@ -3627,7 +3683,7 @@ with tab5:
             initialize_tab5_property_defaults(properties)
             st.caption(f"First selected model: `{selected_input.name}` ({dims[0]} × {dims[1]} × {dims[2]} cells).")
             if not demo_mode and DFN_DEMO_CONFIG.exists():
-                if st.button("Load Michael's reference settings for this grid", key="tab5_load_reference_config"):
+                if st.button("Load default settings from Michael's example file", key="tab5_load_reference_config"):
                     load_dfn_configuration_into_controls(DFN_DEMO_CONFIG, properties)
                     st.session_state["tab5_allow_cropped_intermediates"] = True
                     st.success("Michael's numerical reference settings are loaded. Local GRDECL property mappings were retained where the reference uses placeholders, including the 1,000-timestep growth limit.")

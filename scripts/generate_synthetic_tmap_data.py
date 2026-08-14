@@ -13,8 +13,47 @@ SOURCE_DIR = ROOT / "outputs" / "Best-fit approach" / "01_3d_points_from_origina
 # Use the current Geocosm export as the default header template.  Synthetic
 # files remain explicitly marked synthetic in their filename and comments, but
 # their attributes now look like a returned T>Map dataset.
-EXAMPLE = ROOT / "original_data" / "tmap_example_data" / "New Run, export, combined.txt"
+EXAMPLE = ROOT / "reference_examples" / "tmap_example" / "gassum_base_tmap.txt"
 OUTPUT_DIR = ROOT / "outputs" / "Best-fit approach" / "02_3d_points_with_tmap_data"
+
+DEFAULT_TMAP_HEADER_COLUMNS = [
+    "X",
+    "Y",
+    "Z",
+    "INT, Facies",
+    "INT, CellIndex",
+    "FLOAT, effective_stress_mpa",
+    "FLOAT, intergranular_porosity_p50",
+    "FLOAT, time_ma",
+    "FLOAT, temperature_c",
+    "FLOAT, burial_depth_m",
+    "FLOAT, overpressure_mpa",
+    "FLOAT, intergranular_porosity_p10",
+    "FLOAT, intergranular_porosity_p90",
+    "FLOAT, q_calc_p10",
+    "FLOAT, q_calc_p50",
+    "FLOAT, q_calc_p90",
+    "FLOAT, igv_p10",
+    "FLOAT, igv_p50",
+    "FLOAT, igv_p90",
+    "FLOAT, total_porosity_p10",
+    "FLOAT, total_porosity_p50",
+    "FLOAT, total_porosity_p90",
+    "FLOAT, permeability_p10",
+    "FLOAT, permeability_p25",
+    "FLOAT, permeability_p50",
+    "FLOAT, permeability_p90",
+    "FLOAT, permeability_geomean",
+    "FLOAT, mpor_total_p10",
+    "FLOAT, mpor_total_p50",
+    "FLOAT, mpor_total_p90",
+    "FLOAT, f_calc_p10",
+    "FLOAT, f_calc_p50",
+    "FLOAT, f_calc_p90",
+    "FLOAT, r_calc_p10",
+    "FLOAT, r_calc_p50",
+    "FLOAT, r_calc_p90",
+]
 
 
 FACIES = {
@@ -80,6 +119,14 @@ def clamp(value: float, lower: float, upper: float) -> float:
 
 
 def tmap_header_columns(example_path: Path) -> list[str]:
+    candidates = [
+        example_path,
+        ROOT / "reference_examples" / "tmap_example" / "gassum_base_tmap.txt",
+    ]
+    example_path = next((path for path in candidates if path.exists()), None)
+    if example_path is None:
+        print("No T>Map example header found; using built-in reservoir-quality synthetic header.")
+        return DEFAULT_TMAP_HEADER_COLUMNS
     try:
         lines = example_path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
@@ -356,7 +403,7 @@ def write_facies_readme(output_dir: Path, facies_counts: Counter[int]) -> None:
         [
             "",
             "Generated T>Map-style point sets retain the original XYZ and facies code from the source 3D point sets,",
-            "then append attributes named after `original_data/tmap_example_data/New Run, export, combined.txt`.",
+            "then append attributes named after the available example T>Map export in `reference_examples/tmap_example`.",
             "Volume quantities use the same vol % convention as the Geocosm T>Map export.",
             "Permeability is written in mD and clamped to 0-10000.",
         ]

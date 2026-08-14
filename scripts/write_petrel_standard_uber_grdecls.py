@@ -11,6 +11,7 @@ from append_multi_realizations_uber_tmap_to_grdecls import (
     interpolate,
     read_uber_tmap_pointsets,
 )
+from append_best_fit_tmap_to_grdecls import normalized_property_key
 from grdecl_utils import grdecl_cell_centers, path_for_io
 
 
@@ -70,7 +71,7 @@ def interpolated_property_values(
     property_columns: list[str],
     no_extrapolate: bool,
 ) -> tuple[dict[str, list[str]], int]:
-    attr_indices = {column: property_columns.index(column) for column, _, _ in PETREL_PROPERTY_COLUMNS}
+    source_by_key = {normalized_property_key(column): column for column in property_columns}
     values_by_column = {column: [] for column, _, _ in PETREL_PROPERTY_COLUMNS}
     missing_series = 0
 
@@ -82,7 +83,7 @@ def interpolated_property_values(
             missing_series += 1
             continue
         for column, values in values_by_column.items():
-            values.append(interpolate(series, z, attr_indices[column], no_extrapolate))
+            values.append(interpolate(series, z, source_by_key[column], no_extrapolate))
 
     return values_by_column, missing_series
 
@@ -90,7 +91,8 @@ def interpolated_property_values(
 def write_petrel_standard_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, no_extrapolate: bool) -> None:
     property_columns, table = read_uber_tmap_pointsets(pointset_dir)
     required_columns = [column for column, _, _ in PETREL_PROPERTY_COLUMNS]
-    missing_columns = [column for column in required_columns if column not in property_columns]
+    available_keys = {normalized_property_key(column) for column in property_columns}
+    missing_columns = [column for column in required_columns if column not in available_keys]
     if missing_columns:
         raise ValueError(f"Uber T>Map point sets are missing required column(s): {', '.join(missing_columns)}")
 

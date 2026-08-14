@@ -36,6 +36,9 @@ The approaches are alternatives; they are not stages that must be run one after 
 │       ├── source_grdecls/            Source GRDECL realizations
 │       └── facies_config.json         Project-specific facies definitions
 ├── scripts/                           Reusable command-line workflow scripts
+├── reference_examples/                Compact external reference examples
+│   ├── michael_dfn_example/           Michael's DFN example GRDECL/config
+│   └── tmap_example/                  Example real T>Map point-set export
 ├── outputs/<project-name>/            Generated point sets, augmented and DFN-prepared GRDECLs (not versioned)
 ├── regenerate_synthetic_outputs.py    Rebuild all demonstration outputs locally
 ├── run_dashboard.py                   Start the dashboard
@@ -120,6 +123,8 @@ python regenerate_synthetic_outputs.py --source-dir "C:\path\to\source-grdecls" 
 
 For an actual T>Map project, use the individual build and append commands in [WORKFLOW.md](WORKFLOW.md): send the `01_*` point sets to T>Map, put the returned files in the matching `02_*_with_tmap_data` folder, then run that approach's append script. Do not run the synthetic generator over real returned T>Map files.
 
+Real T>Map return files do not need the synthetic filename suffix. The dashboard recognizes Petrel/T>Map point-set files from their `BEGIN HEADER` / `END HEADER` block and matches Best-fit returns to source pointsets by T>Map header provenance, filename, row count, or the single active source pointset. Returned property columns are imported dynamically: identity columns such as `X`, `Y`, `Z`, `Facies`, `CellIndex`, `Realization`, `ControlColumn`, and `point_id` are used for matching/provenance, while the other exported columns are appended to GRDECL.
+
 ## Facies configuration
 
 Facies codes are discovered dynamically, so scripts support new integer codes without code changes. For each new DionisosFlow model, create a source-specific configuration by scanning its GRDECLs and entering the meaning of every observed integer:
@@ -148,7 +153,7 @@ If a different model reuses an existing number with another geological meaning, 
 
 Generated outputs and virtual environments are excluded through `.gitignore`. This keeps the repository practical to clone and avoids GitHub's large-file restrictions.
 
-Generated `outputs/` are deliberately not versioned. They can be recreated from the included example GRDECLs by running `regenerate_synthetic_outputs.py`, which produces synthetic sample T>Map data and the corresponding augmented GRDECLs. For a real project, replace the synthetic return files with the actual T>Map results. If source data are confidential or too large for GitHub, store them in the appropriate GEUS/OneDrive location and document their access path separately.
+Generated `outputs/` are deliberately not versioned. They can be recreated from the included example GRDECLs by running `regenerate_synthetic_outputs.py`, which produces synthetic sample T>Map data and the corresponding augmented GRDECLs. The compact `reference_examples/` folder keeps only Michael's DFN example GRDECL/config and the final `gassum_base_tmap.txt` real T>Map export used as a schema/example file. For a real project, replace the synthetic return files with the actual T>Map results. If source data are confidential or too large for GitHub, store them in the appropriate GEUS/OneDrive location and document their access path separately.
 
 ## Fracture-modelling stages
 

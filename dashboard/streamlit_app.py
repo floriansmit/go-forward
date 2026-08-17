@@ -498,6 +498,107 @@ def plot_map_with_cells(
     st.plotly_chart(fig, width="stretch", key=key)
 
 
+def plot_grdecl_k_mesh(
+    grdecl_path: str,
+    property_keyword: str,
+    k_layer: int,
+    title: str,
+    colors: dict[int, str] | None = None,
+    continuous_limits: tuple[float, float] | None = None,
+    key: str | None = None,
+) -> None:
+    """Render one real GRDECL K-layer as a single WebGL mesh.
+
+    Only the top faces of the selected layer are constructed. This makes a
+    GRDECL visibly distinct from a point set without generating a full-volume
+    mesh or one Plotly trace per cell.
+    """
+    cells = grdecl_cell_polygons(Path(grdecl_path), property_keyword, k_layer)
+    if cells.empty or property_keyword not in cells:
+        st.warning("Could not build a GRDECL cell mesh for this layer and property.")
+        return
+    values = pd.to_numeric(cells[property_keyword], errors="coerce")
+    is_discrete = is_discrete_facies_property(property_keyword, values.to_numpy())
+    if not is_discrete:
+        cells = cells.loc[valid_continuous_mask(values)].copy()
+        values = pd.to_numeric(cells[property_keyword], errors="coerce")
+        if cells.empty:
+            st.warning("No valid values are available for this GRDECL cell layer.")
+            return
+
+    # Four unshared vertices per cell preserve a constant cell value, while
+    # the whole layer is still drawn with one Mesh3d WebGL trace.
+    x: list[float] = []
+    y: list[float] = []
+    z: list[float] = []
+    tri_i: list[int] = []
+    tri_j: list[int] = []
+    tri_k: list[int] = []
+    customdata: list[list[float | int]] = []
+    face_colors: list[str] = []
+    intensities: list[float] = []
+    for cell_number, (_, row) in enumerate(cells.iterrows()):
+        base = cell_number * 4
+        x.extend([float(row["X0"]), float(row["X1"]), float(row["X2"]), float(row["X3"])])
+        y.extend([float(row["Y0"]), float(row["Y1"]), float(row["Y2"]), float(row["Y3"])])
+        z.extend([float(row["Z0_top"]), float(row["Z1_top"]), float(row["Z2_top"]), float(row["Z3_top"])])
+        tri_i.extend([base, base])
+        tri_j.extend([base + 1, base + 2])
+        tri_k.extend([base + 2, base + 3])
+        raw_value = float(row[property_keyword])
+        customdata.extend([[int(row["I"]), int(row["J"]), int(row["K"]), raw_value]] * 4)
+        if is_discrete:
+            category = int(round(raw_value))
+            colour = (colors or {}).get(category, default_facies_color(category))
+            face_colors.extend([colour, colour])
+        else:
+            display_value = float(np.log10(max(raw_value, 1e-12))) if "perm" in property_keyword.lower() else raw_value
+            intensities.extend([display_value] * 4)
+
+    mesh_args: dict[str, object] = {
+        "x": x, "y": y, "z": z,
+        "i": tri_i, "j": tri_j, "k": tri_k,
+        "customdata": customdata,
+        "flatshading": True,
+        "hovertemplate": (f"<b>{property_keyword}: %{{customdata[3]}}</b><br>"
+                          "I,J,K: %{customdata[0]}, %{customdata[1]}, %{customdata[2]}<extra></extra>"),
+        "name": f"GRDECL cells, K={k_layer}",
+        "showscale": not is_discrete,
+    }
+    if is_discrete:
+        mesh_args["facecolor"] = face_colors
+    else:
+        low_high = continuous_limits
+        if low_high is None:
+            finite = np.asarray(intensities, dtype=float)
+            low_high = (float(finite.min()), float(finite.max()))
+        if low_high[0] == low_high[1]:
+            low_high = (low_high[0] - 0.5, low_high[1] + 0.5)
+        mesh_args.update({
+            "intensity": intensities,
+            "intensitymode": "vertex",
+            "colorscale": "Viridis",
+            "cmin": low_high[0],
+            "cmax": low_high[1],
+            "colorbar": {"title": f"{property_keyword}{' (log10 mD)' if 'perm' in property_keyword.lower() else ''}"},
+        })
+    fig = go.Figure(go.Mesh3d(**mesh_args))
+    fig.update_layout(
+        height=560,
+        margin=dict(l=10, r=10, t=45, b=10),
+        title=title,
+        dragmode="pan",
+        scene={
+            "aspectmode": "data",
+            "camera": {"projection": {"type": "orthographic"}, "eye": {"x": 0, "y": 0, "z": 2.2}, "up": {"x": 0, "y": 1, "z": 0}},
+            "xaxis": {"title": "X"}, "yaxis": {"title": "Y"}, "zaxis": {"visible": False},
+        },
+        showlegend=False,
+    )
+    st.plotly_chart(fig, width="stretch", key=key)
+    st.caption(f"True GRDECL top faces for K={k_layer}: {len(cells):,} cells rendered as one WebGL mesh.")
+
+
 def plot_section_with_cells(
     df: pd.DataFrame,
     color_column: str,
@@ -2658,6 +2759,7 @@ def visualization_panel(
     is_grdecl: bool = False,
     cell_only: bool = False,
     dynamic_continuous_scale: bool = False,
+    grdecl_path: str | None = None,
 ) -> None:
     numeric_or_small = [
         col
@@ -2752,10 +2854,38 @@ def visualization_panel(
             if is_grdecl and "K" in plot_df.columns:
                 k_min, k_max = int(plot_df["K"].min()), int(plot_df["K"].max())
                 slice_mode = st.radio("Map slice", ["K layer", "Depth band below model top"], horizontal=True, key=f"{key}_point_slice_mode")
+                show_mesh = False
                 if slice_mode == "K layer":
                     selected_k = k_layer_selector(f"{key}_point_k_layer", k_min, k_max)
                     point_layer = viewer_df[viewer_df["K"] == selected_k]
                     title = f"Map viewer (points, K={selected_k})"
+                    can_show_mesh = (
+                        grdecl_path is not None
+                        and Path(grdecl_path).is_file()
+                        and color_column != "CellIndex"
+                    )
+                    if can_show_mesh:
+                        show_mesh = st.checkbox(
+                            "Show true GRDECL cells for selected K layer (experimental)",
+                            key=f"{key}_k_mesh",
+                            help=(
+                                "Renders the top faces of this one K layer from COORD and ZCORN as a single "
+                                "WebGL mesh. This is much lighter than the earlier per-cell polygon view, but "
+                                "still more demanding than points."
+                            ),
+                        )
+                    elif grdecl_path is not None and color_column == "CellIndex":
+                        st.caption("True-cell view requires a GRDECL property. Select Facies or another grid property instead of CellIndex.")
+                    if show_mesh:
+                        plot_grdecl_k_mesh(
+                            grdecl_path,
+                            color_column,
+                            selected_k,
+                            f"Map viewer (true GRDECL cells, K={selected_k})",
+                            colors if is_discrete else None,
+                            continuous_limits,
+                            key=f"{key}_k_mesh_plot",
+                        )
                 else:
                     max_depth = float((viewer_df.groupby(["I", "J"])["Z"].transform("max") - viewer_df["Z"]).max())
                     st.caption("Uses the shallowest exported point in each I/J column as the local model top. Only real points within the chosen depth band are shown; gaps reveal reduced sampling coverage.")
@@ -2763,7 +2893,8 @@ def visualization_panel(
                     half_thickness = st.slider("Depth-band half-thickness (m)", 1.0, max(1.0, max_depth / 2.0), min(5.0, max(1.0, max_depth / 2.0)), step=1.0, key=f"{key}_point_depth_band")
                     point_layer = slice_depth_band_below_top(viewer_df, depth_below_top, half_thickness)
                     title = f"Map viewer (points, {depth_below_top:g} ± {half_thickness:g} m below model top)"
-                plot_map(point_layer, color_column, title, colors if is_discrete else None, key=f"{key}_point_map", extent=map_extent, continuous_limits=continuous_limits)
+                if not show_mesh:
+                    plot_map(point_layer, color_column, title, colors if is_discrete else None, key=f"{key}_point_map", extent=map_extent, continuous_limits=continuous_limits)
             else:
                 plot_map(viewer_df, color_column, "Map viewer", colors if is_discrete else None, key=f"{key}_point_map", extent=map_extent, continuous_limits=continuous_limits)
     elif view == "3D viewer":
@@ -3294,7 +3425,7 @@ with tab1:
                 st.error(f"Could not build the Uber-point preview: {exc}")
         elif grdecl and prop:
             df = grdecl_dataframe(str(grdecl), prop, max_rows)
-            visualization_panel(df, "tab1", prop, is_grdecl=True)
+            visualization_panel(df, "tab1", prop, is_grdecl=True, grdecl_path=str(grdecl))
 
 with tab2:
     left, right = st.columns([0.34, 0.66])
@@ -3481,7 +3612,7 @@ with tab3:
         if augmented_file:
             df = augmented_grdecl_dataframe(str(augmented_file), max_rows)
             default_property = "Facies" if "Facies" in df.columns else "FACIES" if "FACIES" in df.columns else None
-            visualization_panel(df, "tab3", default_property, is_grdecl=True)
+            visualization_panel(df, "tab3", default_property, is_grdecl=True, grdecl_path=str(augmented_file))
 
 with tab4:
     left, right = st.columns([0.42, 0.58])
@@ -3627,7 +3758,7 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
             viewer_file = st.selectbox("DFN-preparation file", dfn_files, format_func=lambda path: path.name, key="tab4_dfn_file") if viewer_choice == "DFN-preparation GRDECL" else geomech_input
             viewer_df = augmented_grdecl_dataframe(str(viewer_file), max_rows)
             default_property = "Facies" if "Facies" in viewer_df.columns else "FACIES" if "FACIES" in viewer_df.columns else None
-            visualization_panel(viewer_df, "tab4_viewer", default_property, is_grdecl=True)
+            visualization_panel(viewer_df, "tab4_viewer", default_property, is_grdecl=True, grdecl_path=str(viewer_file))
             if viewer_choice == "DFN-preparation GRDECL":
                 st.caption("Inspect `DFNPorosity`, `DFNEffectiveStress_MPa`, and `DIPAZIMUTH` to verify the values passed to DFN Generator. `YoungsModulus_Pa` is written in the units required by the executable; `DIPAZIMUTH` is degrees clockwise from North.")
 
@@ -3957,7 +4088,7 @@ with tab6:
         if result_files and manifest.get("run_grid"):
             result_file = st.selectbox("DFN output GRDECL", result_files, format_func=lambda path: path.name, key=f"{result_key_prefix}_result_file")
             result_df = dfn_result_dataframe(str(manifest["run_grid"]), str(result_file), max_rows)
-            visualization_panel(result_df, f"{result_key_prefix}_viewer", result_df.columns[-1] if len(result_df.columns) > 7 else None, is_grdecl=True, dynamic_continuous_scale=True)
+            visualization_panel(result_df, f"{result_key_prefix}_viewer", result_df.columns[-1] if len(result_df.columns) > 7 else None, is_grdecl=True, dynamic_continuous_scale=True, grdecl_path=str(manifest["run_grid"]))
             fab_fracture_viewer(files_in(result_folder, ("*.FAB", "*.fab")), f"{result_key_prefix}_fab")
         elif status.get("status") == "completed":
             st.warning("The run completed but no GRDECL result was found. Check the run log in Tab 5 and its output folder.")

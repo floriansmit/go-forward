@@ -71,7 +71,22 @@ For a new project, Tab 1 accepts an external local source folder. Select **Enter
 - Python 3.10+ with `streamlit`, `pandas`, `numpy`, and `plotly` installed
 - Source GRDECL models with `SPECGRID`, `COORD`, `ZCORN`, and an integer facies property
 
-Install the dashboard dependencies if needed:
+### Installation
+
+#### Using `uv` (Recommended)
+
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if not already installed.
+2. Synchronize project dependencies:
+
+```text
+uv sync
+```
+
+When using `uv`, you can run project commands directly with `uv run` (e.g. `uv run python run_dashboard.py`).
+
+#### Using standard `pip`
+
+Install the dashboard dependencies into your Python environment:
 
 ```text
 python -m pip install -r requirements-dashboard.txt

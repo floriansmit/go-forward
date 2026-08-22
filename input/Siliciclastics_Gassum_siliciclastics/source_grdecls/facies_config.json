@@ -1,12 +1,8 @@
 {
   "facies_property": "Facies",
-  "source_grdecl_directory": "input/SS_201_Gassum_V0/source_grdecls",
+  "source_grdecl_directory": "input/Siliciclastics_Gassum_siliciclastics/source_grdecls",
   "source_grdecl_files": [
-    "gassum_base.grdecl",
-    "gassum_maxsubs.grdecl",
-    "gassum_maxsupply.grdecl",
-    "gassum_minsubs.grdecl",
-    "gassum_minsupply.grdecl"
+    "gassum_base.grdecl"
   ],
   "facies_names": {
     "1": "FA1a Offshore",

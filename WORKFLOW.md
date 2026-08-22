@@ -13,8 +13,8 @@ outputs/<project>/
 
 Create a project in the dashboard sidebar, select its rock-workflow profile, and import one or more source GRDECL files in the first tab. The four included examples are:
 
-- `MVP_Gassum_mvp`
-- `Siliciclastics_Gassum_siliciclastics`
+- `MVP_Gassum_mvp` (five Gassum realizations for the multi-realization demonstration)
+- `Siliciclastics_Gassum_siliciclastics` (Gassum Base only for the single-model route)
 - `Reef_Demo_carbonates`
 - `Crystalline_Pluton_Demo_crystalline`
 
@@ -100,7 +100,7 @@ For a vertically reduced Best-fit point set, use the dashboard conversion contro
 All selected source models must have compatible grid dimensions and cell ordering. The builders use the project `facies_config.json` and, by default, export only classes with T>Map enabled.
 
 ```powershell
-$Project = "Siliciclastics_Gassum_siliciclastics"
+$Project = "MVP_Gassum_mvp"
 $SourceDir = ".\input\$Project\source_grdecls"
 $Config = "$SourceDir\facies_config.json"
 $Out = ".\outputs\$Project"
@@ -143,7 +143,7 @@ Use the dashboard to select the source models, preview point density, choose ver
 
 ## 5. Synthetic demonstration data
 
-Synthetic T>Map data is intended only for demonstrations and dashboard testing. It uses placeholder relationships and must not be confused with returned T>Map simulations.
+Synthetic T>Map data is intended only for demonstrations and dashboard testing. It uses placeholder relationships and must not be confused with returned T>Map simulations. The supplied MVP project contains all five Gassum realizations and is the appropriate demonstration source for Union, Control, and Uber.
 
 To recreate the supplied siliciclastic/MVP example output set:
 

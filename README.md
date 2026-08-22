@@ -32,8 +32,8 @@ WORKFLOW.md                          # detailed siliciclastic/MVP command guide
 
 The repository includes four input projects so each profile is immediately visible in the dashboard:
 
-- `MVP_Gassum_mvp`
-- `Siliciclastics_Gassum_siliciclastics`
+- `MVP_Gassum_mvp` (the five Gassum realizations for exercising multi-realization routes)
+- `Siliciclastics_Gassum_siliciclastics` (the Gassum Base model for the single-model T>Map route)
 - `Reef_Demo_carbonates`
 - `Crystalline_Pluton_Demo_crystalline`
 
@@ -86,7 +86,7 @@ Crystalline projects skip the 3D-point and diagenesis stages. Define `RockType`,
 
 ## Recreate synthetic siliciclastic example outputs
 
-The regeneration launcher applies only to the siliciclastic/MVP T>Map workflows. It rebuilds Best-fit, Union, Control, and Uber outputs for the supplied multi-realization Gassum project:
+The regeneration launcher applies only to the siliciclastic/MVP T>Map workflows. By default it rebuilds Best-fit, Union, Control, and Uber outputs for the supplied MVP multi-realization Gassum project:
 
 ```powershell
 uv run python regenerate_synthetic_outputs.py

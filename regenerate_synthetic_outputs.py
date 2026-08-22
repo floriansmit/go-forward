@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
             "replacement for a real T>Map run."
         )
     )
-    parser.add_argument("--project", default="SS_201_Gassum_V0")
+    parser.add_argument("--project", default="Siliciclastics_Gassum_siliciclastics")
     parser.add_argument("--source-dir", type=Path)
     parser.add_argument("--facies-property", default="Facies")
     parser.add_argument("--facies-config", type=Path)

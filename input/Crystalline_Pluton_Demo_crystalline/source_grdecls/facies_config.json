@@ -1,0 +1,33 @@
+{
+  "facies_property": "RockType",
+  "source_grdecl_directory": "input/Crystalline_Pluton_Demo_crystalline/source_grdecls",
+  "source_grdecl_files": [
+    "crystalline_pluton_demo.grdecl"
+  ],
+  "facies_names": {
+    "1": "Granite pluton",
+    "2": "Contact metamorphic aureole",
+    "3": "Gneissic basement host rock",
+    "4": "Fractured shear zone"
+  },
+  "facies_colors": {
+    "1": "#d73027",
+    "2": "#fc8d59",
+    "3": "#4575b4",
+    "4": "#7b3294"
+  },
+  "facies_metadata": {
+    "1": {
+      "category": "reservoir"
+    },
+    "2": {
+      "category": "reservoir"
+    },
+    "3": {
+      "category": "non_reservoir"
+    },
+    "4": {
+      "category": "non_reservoir"
+    }
+  }
+}

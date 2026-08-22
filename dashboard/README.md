@@ -1,26 +1,41 @@
-# GO-Forward GRDECL/T>Map Dashboard
+# GO-Forward dashboard
 
-Streamlit MVP for inspecting the DionisosFlow GRDECL to T>Map point-set workflow.
+The dashboard is the project-level interface for inspecting GRDECL grids, preparing diagenesis handoffs, assigning geomechanics, running DFM Generator, and viewing results.
 
-## Install
+## Start it
 
-```powershell
-python -m pip install -r requirements-dashboard.txt
-```
-
-## Run
+From the repository root:
 
 ```powershell
-python run_dashboard.py
+uv sync
+uv run python run_dashboard.py
 ```
 
-This uses the Python interpreter that starts the command and does not require a PowerShell execution-policy override.
+Use `python -m pip install -r requirements-dashboard.txt` and `python run_dashboard.py` only when not using uv.
 
-The dashboard has three tabs:
+## Project profiles
 
-- **1. Prepare models for diagenesis (FSM → FDM):** load source GRDECLs, inspect IJK/XYZ cell-centre views, and create 3D pointsets.
-- **2. Diagenesis modelling data (T>Map):** inspect T>Map-style point sets, generate synthetic T>Map data for MVP testing, and append returned properties to GRDECL.
-- **3. Review diagenesis results:** inspect augmented GRDECL outputs, including map and cross-section views of appended properties.
-- **4. Prepare and run fracture modelling (FDM → FFM / DFN):** assign facies-calibrated geomechanical properties and prepare DFN-ready GRDECLs.
+The left sidebar creates and selects projects. Choose a project type explicitly; it determines the visible workflow tabs and adds a suffix to the project folder.
 
-Rob and Linda's real T>Map outputs should replace the synthetic files in the matching `02_*_with_tmap_data` output folder before running the append step.
+| Profile | Visible dashboard route |
+| --- | --- |
+| MVP | FSM → FDM (GRDECL → 3D points) · FDM Append & View · FFM Geomech preparation · FFM Run DFM · FFM View results |
+| Siliciclastics | FSM → FDM (GRDECL → 3D points) · FDM Append & View · Fault Seal Analysis placeholder |
+| Carbonates | FSM GRDECL → Mesh · FDM Carbonate Diagenesis · FFM Geomech preparation · FFM Run DFM · FFM View results |
+| Crystalline rocks | GRDECL Inspect · FFM Geomech preparation · FFM Run DFM · FFM View results |
+
+Projects are listed from `input/<project>/`. Import one or more source GRDECLs from the first relevant tab; they are copied to `input/<project>/source_grdecls/`. Generated files are stored under `outputs/<project>/` and are not versioned.
+
+## Viewer behaviour
+
+GRDECL grids are displayed by cell centre by default for performance. Map, cross-section, and 3D views support I/J/K selection, next/previous layer controls, static extents, vertical exaggeration, and discrete categorical palettes. The experimental true-cell view renders only the selected K layer and can be slower for large models.
+
+`Facies`, `RockType`, and common lithology names are detected as discrete integer classifications. The project definition JSON provides labels and colours.
+
+## T>Map and DFM
+
+MVP and siliciclastic profiles build 3D point sets with stable `CellIndex` identity. Import returned T>Map files in **FDM Append & View**; the dashboard identifies their source point set from provenance, filename, or matching information before append-back.
+
+**FFM Geomech preparation** writes the GRDECL properties required by the DFM executable, including `DFNPorosity`, `DFNEffectiveStress_MPa`, `YoungsModulus_Pa`, `PoissonsRatio`, `FrictionCoefficient`, `FractureEnergy_J_m2`, and optionally `DIPAZIMUTH`.
+
+**FFM Run DFM** writes a reproducible run folder with copied input grid, configuration, manifest, status, log, and output. Use cropped runs first. Explicit fracture generation can take substantially longer than implicit-property calculations.

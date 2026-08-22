@@ -32,6 +32,28 @@ SCRIPTS = ROOT / "scripts"
 INPUT_ROOT = ROOT / "input"
 OUTPUT_ROOT = ROOT / "outputs"
 DEFAULT_PROJECT_NAME = "SS_201_Gassum_V0"
+WORKFLOW_PROFILES = {
+    "MVP": {
+        "suffix": "mvp",
+        "label": "MVP: integrated workflow",
+        "description": "Current coupled sedimentary, T>Map diagenetic, and DFM workflow.",
+    },
+    "Siliciclastics": {
+        "suffix": "siliciclastics",
+        "label": "Siliciclastics",
+        "description": "T>Map workflow with a future Fault Seal Analysis handoff.",
+    },
+    "Carbonates": {
+        "suffix": "carbonates",
+        "label": "Carbonates",
+        "description": "GRDECL inspection, carbonate diagenesis handoff, and DFM workflow.",
+    },
+    "Crystalline rocks": {
+        "suffix": "crystalline",
+        "label": "Crystalline rocks",
+        "description": "GRDECL inspection and DFM workflow without a diagenetic conversion stage.",
+    },
+}
 REFERENCE_EXAMPLES_DIR = ROOT / "reference_examples"
 TMAP_EXAMPLE_FILE = REFERENCE_EXAMPLES_DIR / "tmap_example" / "gassum_base_tmap.txt"
 MICHAEL_DFN_EXAMPLE_DIR = REFERENCE_EXAMPLES_DIR / "michael_dfn_example"
@@ -44,8 +66,41 @@ DFN_DEMO_CONFIG = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest.txt
 DFN_DEMO_OUTPUT_DIR = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest_output"
 
 
-def approaches_for_project(project_output_dir: Path) -> dict[str, dict[str, Path | list[list[str]]]]:
+def approaches_for_project(
+    project_output_dir: Path,
+    workflow_profile: str = "MVP",
+    source_grdecl_dir: Path | None = None,
+) -> dict[str, dict[str, Path | list[list[str]]]]:
     """Return the workflow folders and commands for one isolated project."""
+    if workflow_profile == "Carbonates":
+        root = project_output_dir / "Carbonate workflow"
+        return {
+            "Moose/Golem diagenesis": {
+                "point_dir": root / "01_Moose_Golem_inputs",
+                "tmap_dir": root / "02_Moose_Golem_results",
+                "augmented_dir": root / "03_GRDECLs_with_diagenesis_results",
+                "dfn_dir": root / "04_DFM_prepared_grdecls",
+                "dfn_run_dir": root / "05_DFM_generator_runs",
+                "build_points": [],
+                "generate_tmap": [],
+                "append": [],
+            }
+        }
+    if workflow_profile == "Crystalline rocks":
+        root = project_output_dir / "Crystalline rock workflow"
+        return {
+            "Crystalline rock model": {
+                "point_dir": source_grdecl_dir or root / "00_source_grdecls",
+                "tmap_dir": source_grdecl_dir or root / "00_source_grdecls",
+                "augmented_dir": source_grdecl_dir or root / "00_source_grdecls",
+                "dfn_dir": root / "01_DFM_prepared_grdecls",
+                "dfn_run_dir": root / "02_DFM_generator_runs",
+                "build_points": [],
+                "generate_tmap": [],
+                "append": [],
+            }
+        }
+
     def approach(name: str, point_folder: str, tmap_folder: str, augmented_folder: str, dfn_folder: str, build: str, append: list[str], glob: str):
         root = project_output_dir / name
         return {
@@ -177,9 +232,10 @@ def read_facies_names(path: Path | None = None) -> dict[int, str]:
 
 
 def facies_label(category: int) -> str:
-    """Return the facies code with its configured geological label, if known."""
+    """Return the active categorical code with its configured geological label."""
     name = read_facies_names().get(category)
-    return f"Facies {category} — {name}" if name else f"Facies {category}"
+    label = "Rock type" if globals().get("active_profile") == "Crystalline rocks" else "Facies"
+    return f"{label} {category} — {name}" if name else f"{label} {category}"
 
 
 def write_facies_config(
@@ -206,11 +262,31 @@ def write_facies_config(
 
 
 def is_discrete_facies_property(property_key: str, values: np.ndarray) -> bool:
-    """Check if a property should be treated as discrete facies."""
-    if property_key.strip().upper() in {"FACIES", "FACIE", "FACIESID"}:
+    """Check whether a configured categorical classification uses discrete colours.
+
+    The shared definitions JSON is also used for crystalline projects, where
+    the integer classification is normally called ``RockType`` rather than
+    ``Facies``.  Treating that field as continuous made the configured
+    rock-type palette invisible in the viewer.
+    """
+    normalised = property_key.strip().upper().replace(" ", "").replace("_", "")
+    if normalised in {
+        "FACIES", "FACIE", "FACIESID", "LITHOFACIES",
+        "ROCKTYPE", "ROCKTYPEID", "LITHOLOGY", "LITHO",
+    }:
         finite = values[np.isfinite(values)]
         return finite.size > 0 and np.allclose(finite, np.round(finite))
     return False
+
+
+def preferred_classification_property(properties: list[str], profile: str | None = None) -> str:
+    """Choose the geology classification before generic fields such as ACTNUM."""
+    profile = profile or globals().get("active_profile", "MVP")
+    if profile == "Crystalline rocks":
+        preferred = ("RockType", "ROCKTYPE", "ROCK_TYPE", "Lithology", "LITHOLOGY", "LITHO", "Facies", "FACIES")
+    else:
+        preferred = ("Facies", "FACIES", "Lithofacies", "LITHOFACIES", "Lithology", "LITHOLOGY", "RockType", "ROCKTYPE")
+    return next((name for name in preferred if name in properties), properties[0])
 
 
 def get_visible_facies(values: np.ndarray) -> list[int]:
@@ -853,6 +929,12 @@ def initialize_tab5_property_defaults(properties: list[str]) -> None:
         ("tab5_friction_prop", "FrictionCoefficient"),
         ("tab5_energy_prop", "FractureEnergy_J_m2"),
     ):
+        # A selected field may belong to a previously viewed GRDECL. Reset it
+        # if it no longer exists, then choose the preferred field where one is
+        # available. Widgets read this session value directly, so they must not
+        # also be given a competing ``index=`` default.
+        if st.session_state.get(state_key, "Use default") not in options:
+            st.session_state[state_key] = "Use default"
         if st.session_state.get(state_key, "Use default") == "Use default":
             index = property_option_index(options, preferred)
             if index:
@@ -1461,22 +1543,90 @@ def valid_project_name(name: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name))
 
 
+def project_config_path(name: str) -> Path:
+    return INPUT_ROOT / name / "project_config.json"
+
+
+def workflow_profile_from_project_name(name: str) -> str | None:
+    """Infer a workflow from the controlled suffix used for project folders."""
+    lowered = name.lower()
+    for profile, details in WORKFLOW_PROFILES.items():
+        if lowered.endswith("_" + str(details["suffix"]).lower()):
+            return profile
+    return None
+
+
+def project_workflow_profile(name: str) -> str:
+    """Return the folder-defined workflow, keeping legacy projects as MVP."""
+    suffix_profile = workflow_profile_from_project_name(name)
+    if suffix_profile is not None:
+        return suffix_profile
+    try:
+        payload = json.loads(project_config_path(name).read_text(encoding="utf-8"))
+        profile = payload.get("workflow_profile", "MVP")
+        return profile if profile in WORKFLOW_PROFILES else "MVP"
+    except (OSError, json.JSONDecodeError):
+        return "MVP"
+
+
+def write_project_workflow_profile(name: str, profile: str) -> None:
+    if profile not in WORKFLOW_PROFILES:
+        return
+    path = project_config_path(name)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    payload.update({
+        "project_name": name,
+        "workflow_profile": profile,
+        "workflow_suffix": WORKFLOW_PROFILES[profile]["suffix"],
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def project_name_for_profile(name: str, profile: str) -> str:
+    """Append a controlled rock-workflow suffix to a newly created project."""
+    clean = name.strip().rstrip("_-")
+    suffix = "_" + str(WORKFLOW_PROFILES[profile]["suffix"])
+    if clean.lower().endswith(suffix.lower()):
+        return clean
+    return clean + suffix
+
+
+def set_profile_for_selected_project() -> None:
+    """Retained as a harmless selector callback for existing sessions."""
+    return None
+
+
 def project_names() -> list[str]:
-    names: set[str] = set()
-    for parent in (INPUT_ROOT, OUTPUT_ROOT):
-        if parent.exists():
-            names.update(path.name for path in parent.iterdir() if path.is_dir())
-    return sorted(names, key=str.lower)
+    """Return projects registered by their input folder.
+
+    Input is authoritative because renaming a project input folder is the
+    normal way to standardise a project name.  Old output-only folders may be
+    retained temporarily for backup, but must not leave a broken project entry
+    in the dashboard selector.
+    """
+    if not INPUT_ROOT.exists():
+        return []
+    return sorted(
+        (path.name for path in INPUT_ROOT.iterdir() if path.is_dir()),
+        key=str.lower,
+    )
 
 
-def create_project(name: str) -> None:
-    clean = name.strip()
-    if not valid_project_name(clean):
+def create_project(name: str, profile: str) -> None:
+    base_name = name.strip()
+    if profile not in WORKFLOW_PROFILES or not valid_project_name(base_name):
         st.session_state["project_create_error"] = "Use letters, numbers, hyphens, and underscores only; begin with a letter or number."
         return
+    clean = project_name_for_profile(base_name, profile)
     (INPUT_ROOT / clean / "source_grdecls").mkdir(parents=True, exist_ok=True)
     (OUTPUT_ROOT / clean).mkdir(parents=True, exist_ok=True)
+    write_project_workflow_profile(clean, profile)
     st.session_state["project_selector"] = clean
+    st.session_state["project_workflow_selector"] = profile
     st.session_state["project_created"] = clean
 
 
@@ -1545,6 +1695,23 @@ def remove_project(name: str, remove_input: bool) -> None:
     st.session_state["project_remove_result"] = (level, message)
 
 
+def clear_missing_workspace_file_state() -> None:
+    """Remove stale file-selector values after external folder renames."""
+    workspace_roots = (INPUT_ROOT.resolve(), OUTPUT_ROOT.resolve())
+    for key, value in list(st.session_state.items()):
+        if not isinstance(value, (str, Path)):
+            continue
+        try:
+            candidate = Path(value).expanduser()
+            resolved = candidate.resolve()
+        except (OSError, TypeError, ValueError):
+            continue
+        if not candidate.is_absolute() or candidate.exists():
+            continue
+        if any(str(resolved).lower().startswith(str(root).lower() + "\\") for root in workspace_roots):
+            del st.session_state[key]
+
+
 @st.dialog("Remove selected project")
 def remove_project_dialog(project_name: str) -> None:
     st.write(f"Project: `{project_name}`")
@@ -1565,17 +1732,24 @@ def remove_project_dialog(project_name: str) -> None:
         st.rerun()
 
 
-def copy_source_grdecls_into_project(source_text: str, destination_text: str, replace_existing: bool) -> None:
+def copy_source_grdecls_into_project(
+    source_text: str,
+    destination_text: str,
+    replace_existing: bool,
+    result_key: str = "source_copy_result",
+    selector_key: str = "source_grdecl_folder_choice",
+    selector_value: str | None = None,
+) -> None:
     """Copy an external GRDECL source set into the active project's input folder."""
     source_dir = Path(source_text).expanduser()
     destination_dir = Path(destination_text)
     try:
         source_files = [path for path in source_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl"]
     except OSError as exc:
-        st.session_state["source_copy_result"] = ("error", f"Could not read {source_dir}: {exc}")
+        st.session_state[result_key] = ("error", f"Could not read {source_dir}: {exc}")
         return
     if not source_files:
-        st.session_state["source_copy_result"] = ("error", f"No .grdecl files were found in {source_dir}.")
+        st.session_state[result_key] = ("error", f"No .grdecl files were found in {source_dir}.")
         return
     destination_dir.mkdir(parents=True, exist_ok=True)
     copied = skipped = 0
@@ -1599,7 +1773,7 @@ def copy_source_grdecls_into_project(source_text: str, destination_text: str, re
         except (OSError, json.JSONDecodeError):
             pass
         config_copied = True
-    st.session_state["source_copy_result"] = (
+    st.session_state[result_key] = (
         "success",
         f"Copied {copied} GRDECL file(s) into {destination_dir}" +
         (f"; skipped {skipped} existing file(s)" if skipped else "") +
@@ -1607,10 +1781,14 @@ def copy_source_grdecls_into_project(source_text: str, destination_text: str, re
     )
     # Callbacks run before widgets are created on the next rerun, so this can
     # safely return the source selector to the project's own input folder.
-    st.session_state["source_grdecl_folder_choice"] = display_path(destination_dir)
+    st.session_state[selector_key] = selector_value or display_path(destination_dir)
 
 
-def choose_source_folder_with_windows_explorer() -> None:
+def choose_source_folder_with_windows_explorer(
+    selection_key: str = "source_grdecl_folder_custom",
+    error_key: str = "source_browse_error",
+    title: str = "Select folder containing source GRDECL files",
+) -> None:
     """Open a native Windows folder chooser for this local dashboard session."""
     try:
         import tkinter as tk
@@ -1619,12 +1797,218 @@ def choose_source_folder_with_windows_explorer() -> None:
         window = tk.Tk()
         window.withdraw()
         window.attributes("-topmost", True)
-        folder = filedialog.askdirectory(title="Select folder containing source GRDECL files")
+        folder = filedialog.askdirectory(title=title)
         window.destroy()
         if folder:
-            st.session_state["source_grdecl_folder_custom"] = folder
+            st.session_state[selection_key] = folder
     except Exception as exc:
-        st.session_state["source_browse_error"] = f"Could not open the Windows folder chooser: {exc}"
+        st.session_state[error_key] = f"Could not open the Windows folder chooser: {exc}"
+
+
+def choose_source_grdecl_files_with_windows_explorer(
+    selection_key: str,
+    error_key: str,
+    title: str = "Select source GRDECL file(s)",
+) -> None:
+    """Open a native unrestricted multi-file chooser for source GRDECLs."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        window = tk.Tk()
+        window.withdraw()
+        window.attributes("-topmost", True)
+        paths = filedialog.askopenfilenames(title=title, filetypes=[("All files", "*.*")])
+        window.destroy()
+        if paths:
+            st.session_state[selection_key] = list(paths)
+    except Exception as exc:
+        st.session_state[error_key] = f"Could not open the file chooser: {exc}"
+
+
+def copy_selected_source_grdecls_into_project(
+    selected_paths: list[str],
+    destination_text: str,
+    replace_existing: bool,
+    result_key: str,
+) -> None:
+    """Copy explicitly selected source GRDECLs and an optional facies JSON."""
+    selected = [Path(path).expanduser() for path in selected_paths]
+    grdecl_files = [path for path in selected if path.is_file() and path.suffix.lower() == ".grdecl"]
+    config_files = [path for path in selected if path.is_file() and path.name.lower() == "facies_config.json"]
+    ignored = [path.name for path in selected if path.is_file() and path not in grdecl_files and path not in config_files]
+    if not grdecl_files:
+        st.session_state[result_key] = ("error", "Select at least one `.grdecl` file. The file picker shows all formats so its folder contents remain visible.")
+        return
+    destination_dir = Path(destination_text)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    copied = skipped = 0
+    for source in grdecl_files:
+        destination = destination_dir / source.name
+        if destination.exists() and not replace_existing:
+            skipped += 1
+            continue
+        shutil.copy2(source, destination)
+        copied += 1
+    config_copied = False
+    if config_files:
+        config_source = config_files[-1]
+        destination_config = destination_dir / "facies_config.json"
+        if replace_existing or not destination_config.exists():
+            shutil.copy2(config_source, destination_config)
+            config_copied = True
+    message = f"Copied {copied} GRDECL file(s) into {destination_dir}"
+    if skipped:
+        message += f"; skipped {skipped} existing file(s)"
+    if config_copied:
+        message += "; copied facies_config.json"
+    if ignored:
+        message += "; ignored non-GRDECL file(s): " + ", ".join(ignored)
+    st.session_state[result_key] = ("success", message)
+
+
+def source_grdecl_file_import_controls(
+    key_prefix: str,
+    destination_dir: Path | None = None,
+    select_label: str = "Select source GRDECL file(s)",
+    copy_label: str | None = None,
+) -> None:
+    """Render the shared explicit multi-file GRDECL import control."""
+    destination_dir = destination_dir or ACTIVE_SOURCE_GRDECL_DIR
+    result_key = f"{key_prefix}_copy_result"
+    selection_key = f"{key_prefix}_selected_paths"
+    error_key = f"{key_prefix}_browse_error"
+    if result := st.session_state.pop(result_key, None):
+        level, message = result
+        (st.success if level == "success" else st.error)(message)
+    st.button(
+        select_label,
+        key=f"{key_prefix}_browse",
+        on_click=choose_source_grdecl_files_with_windows_explorer,
+        args=(selection_key, error_key),
+    )
+    if error := st.session_state.pop(error_key, None):
+        st.error(error)
+    selected_paths = st.session_state.get(selection_key, [])
+    if not selected_paths:
+        return
+    selected = [Path(path) for path in selected_paths]
+    st.caption("Selected files: " + ", ".join(path.name for path in selected))
+    replace_existing = st.checkbox("Replace same-named project files", value=False, key=f"{key_prefix}_replace")
+    st.button(
+        copy_label or f"Copy selected files into {display_path(destination_dir)}",
+        key=f"{key_prefix}_copy",
+        on_click=copy_selected_source_grdecls_into_project,
+        args=(selected_paths, str(destination_dir), replace_existing, result_key),
+    )
+
+
+def copy_selected_files_into_directory(
+    selected_paths: list[str],
+    destination_text: str,
+    replace_existing: bool,
+    result_key: str,
+) -> None:
+    """Copy explicitly selected external result files without imposing a format."""
+    selected = [Path(path).expanduser() for path in selected_paths]
+    files = [path for path in selected if path.is_file()]
+    if not files:
+        st.session_state[result_key] = ("error", "No readable files were selected.")
+        return
+    destination_dir = Path(destination_text)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    copied = skipped = 0
+    for source in files:
+        destination = destination_dir / source.name
+        if destination.exists() and not replace_existing:
+            skipped += 1
+            continue
+        shutil.copy2(source, destination)
+        copied += 1
+    message = f"Copied {copied} file(s) into {destination_dir}"
+    if skipped:
+        message += f"; skipped {skipped} existing file(s)"
+    st.session_state[result_key] = ("success", message)
+
+
+def external_file_import_controls(key_prefix: str, destination_dir: Path, select_label: str, copy_label: str) -> None:
+    """Render an unrestricted multi-file importer for external modelling results."""
+    result_key = f"{key_prefix}_copy_result"
+    selection_key = f"{key_prefix}_selected_paths"
+    error_key = f"{key_prefix}_browse_error"
+    if result := st.session_state.pop(result_key, None):
+        level, message = result
+        (st.success if level == "success" else st.error)(message)
+    st.button(
+        select_label,
+        key=f"{key_prefix}_browse",
+        on_click=choose_source_grdecl_files_with_windows_explorer,
+        args=(selection_key, error_key, select_label),
+    )
+    if error := st.session_state.pop(error_key, None):
+        st.error(error)
+    selected_paths = st.session_state.get(selection_key, [])
+    if not selected_paths:
+        return
+    st.caption("Selected files: " + ", ".join(Path(path).name for path in selected_paths))
+    replace_existing = st.checkbox("Replace same-named project files", value=False, key=f"{key_prefix}_replace")
+    st.button(
+        copy_label,
+        key=f"{key_prefix}_copy",
+        on_click=copy_selected_files_into_directory,
+        args=(selected_paths, str(destination_dir), replace_existing, result_key),
+    )
+
+
+def choose_tmap_return_files_with_windows_explorer() -> None:
+    """Open a native multi-file chooser for returned T>Map pointsets."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        window = tk.Tk()
+        window.withdraw()
+        window.attributes("-topmost", True)
+        paths = filedialog.askopenfilenames(title="Select returned T>Map pointset file(s)", filetypes=[("All files", "*.*")])
+        window.destroy()
+        if paths:
+            st.session_state["tab2_import_tmap_selected_paths"] = list(paths)
+    except Exception as exc:
+        st.session_state["tab2_import_tmap_error"] = f"Could not open the file chooser: {exc}"
+
+
+def tmap_return_import_rows(selected_files: list[Path], source_pointsets: list[Path]) -> tuple[list[dict[str, str]], list[Path]]:
+    """Report chosen return files and retain only unambiguous source matches."""
+    candidates = [path for path in selected_files if path.is_file()]
+    compatible = [path for path in candidates if is_tmap_pointset_file(path)]
+    matched = {path: source_pointset_for_returned(path, source_pointsets) for path in compatible}
+    source_counts: dict[Path, int] = {}
+    for source in matched.values():
+        if source is not None:
+            source_counts[source] = source_counts.get(source, 0) + 1
+    rows: list[dict[str, str]] = []
+    importable: list[Path] = []
+    for candidate in candidates:
+        if candidate not in matched:
+            rows.append({
+                "Returned T>Map file": candidate.name,
+                "Matched source 3D pointset": "—",
+                "Status": "Not a recognised T>Map pointset file",
+            })
+            continue
+        source = matched[candidate]
+        if source is None:
+            status = "Unmatched"
+            source_name = "—"
+        elif source_counts[source] > 1:
+            status = "Ambiguous: multiple returns for this source"
+            source_name = source.name
+        else:
+            status = "Ready to copy"
+            source_name = source.name
+            importable.append(candidate)
+        rows.append({"Returned T>Map file": candidate.name, "Matched source 3D pointset": source_name, "Status": status})
+    return rows, importable
 
 
 def source_folder_selector() -> Path:
@@ -1809,25 +2193,41 @@ def porosity_display_limits(values) -> tuple[float, float]:
 
 
 @st.fragment
-def shale_fallback_controls(saved_defaults: dict, default_values: dict) -> tuple[bool, dict[str, float]]:
+def shale_fallback_controls(
+    saved_defaults: dict, default_values: dict, crystalline: bool = False, carbonate: bool = False
+) -> tuple[bool, dict[str, float]]:
     """Render fallback inputs independently from the expensive Tab 4 viewer."""
     shale_fallback = st.checkbox(
-        "Use shale-like depth-compaction fallback where T>Map data is absent",
+        "Use depth-compaction fallback where porosity is absent" if crystalline else "Use provisional carbonate porosity-depth fallback where diagenesis data is absent" if carbonate else "Use shale-like depth-compaction fallback where T>Map data is absent",
         key="tab4_shale_fallback",
-        help="Applies to every cell with no returned T>Map porosity. Returned T>Map values remain unchanged; fallback cells retain their selected facies mechanical formula and are marked GeomechSource = 2.",
+        help=(
+            "Applies to every cell without a valid value in the selected porosity property. "
+            "Cells with input porosity retain it; fallback cells use their selected rock-type mechanical formula and are marked GeomechSource = 2."
+            if crystalline else
+            "Applies only where the selected GOLEM/PHREEQC porosity property has no valid value. It is a provisional carbonate trend, not a replacement for mineral-reaction modelling; fallback cells retain their selected carbonate-facies mechanical formula and are marked GeomechSource = 2."
+            if carbonate else
+            "Applies to every cell with no returned T>Map porosity. Returned T>Map values remain unchanged; fallback cells retain their selected facies mechanical formula and are marked GeomechSource = 2."
+        ),
     )
     if not shale_fallback:
         return False, {}
-    st.caption("Reference curve: φ = φ₀ exp(−c d), where d is depth below the configured Z datum. Starting values follow a normal-compaction-style shale trend and must be calibrated to local data.")
+    fallback_context = (
+        "Use this only as a provisional altered/fractured-rock trend and calibrate it to local data."
+        if crystalline else
+        "This is a provisional bulk carbonate trend only; calibrate it to lithology, diagenetic history, and any available core or log data."
+        if carbonate else
+        "Starting values follow a normal-compaction-style shale trend and must be calibrated to local data."
+    )
+    st.caption("Reference curve: φ = φ₀ exp(−c d), where d is depth below the configured Z datum. " + fallback_context)
     fallback_columns = st.columns(3)
     values = {
         "fallback_porosity_surface": fallback_columns[0].number_input(
-            "Shale φ₀", min_value=0.01, max_value=0.90,
+            "Reference φ₀" if crystalline else "Carbonate φ₀" if carbonate else "Shale φ₀", min_value=0.01, max_value=0.90,
             value=float(saved_defaults.get("fallback_porosity_surface", default_values["fallback_porosity_surface"])), step=0.01,
             key="tab4_fallback_phi0",
         ),
         "fallback_compaction_coefficient_per_m": fallback_columns[1].number_input(
-            "Shale c (1/m)", min_value=0.00001, max_value=0.005,
+            "Reference c (1/m)" if crystalline else "Carbonate c (1/m)" if carbonate else "Shale c (1/m)", min_value=0.00001, max_value=0.005,
             value=float(saved_defaults.get("fallback_compaction_coefficient_per_m", default_values["fallback_compaction_coefficient_per_m"])), format="%.6f", step=0.00001,
             key="tab4_fallback_compaction",
         ),
@@ -1837,7 +2237,8 @@ def shale_fallback_controls(saved_defaults: dict, default_values: dict) -> tuple
             key="tab4_fallback_stress_gradient",
         ),
     }
-    st.caption("The output writes `DFNPorosity` and `DFNEffectiveStress_MPa` for every valid DFN cell. `GEOMECHSOURCE` identifies T>Map-derived cells (`1`) and depth-fallback cells (`2`).")
+    source_label = "input-property cells (`1`)" if crystalline else "GOLEM/PHREEQC-derived cells (`1`)" if carbonate else "T>Map-derived cells (`1`)"
+    st.caption("The output writes `DFNPorosity` and `DFNEffectiveStress_MPa` for every valid DFM cell. `GEOMECHSOURCE` identifies " + source_label + " and depth-fallback cells (`2`).")
     return True, {name: float(value) for name, value in values.items()}
 
 
@@ -2319,11 +2720,19 @@ def uber_sampling_control(paths: list[Path], property_name: str, enabled_codes: 
     return float(spacing)
 
 
-def facies_config_editor(codes: list[int], config_path: Path, source_dir: Path, facies_property: str, key: str) -> None:
-    """Edit names, colours, and T>Map flags for codes visible in the selected model."""
+def facies_config_editor(
+    codes: list[int],
+    config_path: Path,
+    source_dir: Path,
+    facies_property: str,
+    key: str,
+    include_tmap_flag: bool = True,
+    definition_label: str = "Facies",
+) -> None:
+    """Edit facies names, colours, categories, and optionally T>Map inclusion."""
     if not codes:
         return
-    with st.expander("Facies definitions", expanded=False):
+    with st.expander(f"{definition_label} definitions", expanded=False):
         try:
             payload = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
         except (OSError, json.JSONDecodeError):
@@ -2338,34 +2747,40 @@ def facies_config_editor(codes: list[int], config_path: Path, source_dir: Path, 
         metadata = payload.get("facies_metadata", {})
         edited_names, edited_colours, edited_metadata = {}, {}, {}
         st.caption(f"Editing {display_path(config_path)}")
-        st.caption("Disable T>Map for non-reservoir facies. Those cells are excluded from T>Map modelling and will receive `-77777` for appended T>Map properties.")
+        if include_tmap_flag:
+            st.caption("Disable T>Map for non-reservoir facies. Those cells are excluded from T>Map modelling and will receive `-77777` for appended T>Map properties.")
+        else:
+            st.caption(f"Define the {definition_label.lower()} names, colours, and categories used by this project. This workflow does not use T>Map inclusion flags.")
         for position, code in enumerate(codes):
             item = metadata.get(str(code), {}) if isinstance(metadata.get(str(code)), dict) else {}
-            columns = st.columns([0.7, 2.2, 1.0, 1.5, 1.0])
+            columns = st.columns([0.7, 2.2, 1.0, 1.5, 1.0] if include_tmap_flag else [0.7, 2.4, 1.1, 1.7])
             columns[0].write(f"**{code}**")
             edited_names[code] = columns[1].text_input("Name", names.get(str(code), f"Facies {code}"), key=f"{widget_key}_name_{code}")
             edited_colours[code] = columns[2].color_picker("Colour", colours.get(str(code), default_facies_color(position)), key=f"{widget_key}_colour_{code}")
             category_options = ["reservoir", "non_reservoir"]
             category = str(item.get("category", "non_reservoir" if code == 0 else "reservoir"))
             edited_metadata[code] = {"category": columns[3].selectbox("Category", category_options, index=category_options.index(category) if category in category_options else 0, key=f"{widget_key}_category_{code}")}
-            override_key = f"facies_tmap_override::{config_path}::{code}"
-            def set_override(widget: str = f"{widget_key}_tmap_{code}", target: str = override_key, facies_code: int = code) -> None:
-                """Persist only the T>Map switch immediately so export counts stay actionable."""
-                value = bool(st.session_state[widget])
-                st.session_state[target] = value
-                try:
-                    saved = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
-                    saved_metadata = saved.setdefault("facies_metadata", {})
-                    record = saved_metadata.setdefault(str(facies_code), {})
-                    record["tmap_enabled"] = value
-                    config_path.parent.mkdir(parents=True, exist_ok=True)
-                    config_path.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
-                except OSError as exc:
-                    st.error(f"Could not save the T>Map flag: {exc}")
-            edited_metadata[code]["tmap_enabled"] = columns[4].checkbox(
-                "T>Map", value=bool(item.get("tmap_enabled", code != 0)), key=f"{widget_key}_tmap_{code}", on_change=set_override
-            )
-        if st.button("Save facies definitions", key=f"{widget_key}_save"):
+            if include_tmap_flag:
+                override_key = f"facies_tmap_override::{config_path}::{code}"
+
+                def set_override(widget: str = f"{widget_key}_tmap_{code}", target: str = override_key, facies_code: int = code) -> None:
+                    """Persist only the T>Map switch immediately so export counts stay actionable."""
+                    value = bool(st.session_state[widget])
+                    st.session_state[target] = value
+                    try:
+                        saved = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+                        saved_metadata = saved.setdefault("facies_metadata", {})
+                        record = saved_metadata.setdefault(str(facies_code), {})
+                        record["tmap_enabled"] = value
+                        config_path.parent.mkdir(parents=True, exist_ok=True)
+                        config_path.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
+                    except OSError as exc:
+                        st.error(f"Could not save the T>Map flag: {exc}")
+
+                edited_metadata[code]["tmap_enabled"] = columns[4].checkbox(
+                    "T>Map", value=bool(item.get("tmap_enabled", code != 0)), key=f"{widget_key}_tmap_{code}", on_change=set_override
+                )
+        if st.button(f"Save {definition_label.lower()} definitions", key=f"{widget_key}_save"):
             # A selected realization can legitimately omit a facies that occurs
             # elsewhere in the same project. Preserve those project-level
             # definitions rather than replacing the JSON with this one file's
@@ -2386,7 +2801,7 @@ def facies_config_editor(codes: list[int], config_path: Path, source_dir: Path, 
             })
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            st.success("Facies definitions saved.")
+            st.success(f"{definition_label} definitions saved.")
             st.rerun()
 
 
@@ -2974,17 +3389,17 @@ def file_selector(label: str, folder: Path, patterns: tuple[str, ...], key: str)
     return selected
 
 
-def grdecl_property_selector(path: Path, key: str) -> str | None:
+def grdecl_property_selector(path: Path, key: str, classification_label: str = "Facies") -> str | None:
     property_keywords = grdecl_property_keywords(path)
     if not property_keywords:
         return None
-    default = "Facies" if "Facies" in property_keywords else "FACIES" if "FACIES" in property_keywords else property_keywords[0]
+    default = preferred_classification_property(property_keywords)
     return st.selectbox(
-        "Select Facies property in GRDECL",
+        f"Select {classification_label} property in GRDECL",
         property_keywords,
         index=property_keywords.index(default),
         key=key,
-        help="Selects the facies property used for the source-cell viewer and pointset generation.",
+        help=f"Selects the {classification_label.lower()} property used for the source-cell viewer.",
     )
 
 
@@ -3062,21 +3477,41 @@ def coverage_properties(path: Path) -> tuple[str | None, str | None]:
 
 
 @st.fragment
-def geomechanics_property_selectors(properties: list[str]) -> tuple[str, str, str, str]:
+def geomechanics_property_selectors(
+    properties: list[str], classification_label: str = "Facies", workflow_profile: str = "MVP"
+) -> tuple[str, str, str, str]:
     """Keep Tab 4 input-property changes independent from the model viewer."""
+    crystalline = classification_label == "Rock type"
+    carbonate = workflow_profile == "Carbonates"
     facies_property = st.selectbox(
-        "Facies property",
+        f"{classification_label} property",
         properties,
-        index=properties.index("Facies") if "Facies" in properties else 0,
+        index=properties.index(preferred_classification_property(properties)),
         key="tab4_facies",
     )
     porosity_options = [name for name in properties if "poro" in name.lower()]
-    cement_options = [name for name in properties if "cement" in name.lower() or "quartz" in name.lower()]
+    cement_options = [
+        name for name in properties
+        if any(term in name.lower() for term in ("cement", "quartz", "calcite", "dolomite", "anhydrite", "gypsum"))
+    ]
     stress_options = [name for name in properties if "stress" in name.lower()]
-    porosity_property = st.selectbox("T>Map porosity property", porosity_options or properties, key="tab4_poro")
-    cement_property = st.selectbox("Optional cement property", ["None", *(cement_options or properties)], key="tab4_cement")
+    porosity_property = st.selectbox(
+        "Porosity property" if crystalline else "GOLEM/PHREEQC porosity property" if carbonate else "T>Map porosity property",
+        porosity_options or properties,
+        key="tab4_poro",
+    )
+    cement_property = st.selectbox(
+        "Optional mineral or cement property" if carbonate else "Optional cement property",
+        ["None", *(cement_options or properties)],
+        key="tab4_cement",
+    )
     stress_property = st.selectbox("Optional effective-stress property", ["None", *(stress_options or properties)], key="tab4_stress")
-    st.caption("These choices are used only when writing DFN-preparation properties. The output also writes `DFNPorosity` and `DFNEffectiveStress_MPa`: T>Map values where present, otherwise the explicitly enabled depth-compaction fallback.")
+    if crystalline:
+        st.caption("These choices assign geomechanical properties by rock type. The output writes `DFNPorosity` and `DFNEffectiveStress_MPa` from the selected grid properties or the explicitly enabled depth-compaction fallback.")
+    elif carbonate:
+        st.caption("These choices assign geomechanical properties by carbonate facies. Once available, select porosity and mineral/cement properties re-appended from GOLEM/PHREEQC; until then, the source-grid properties can be used as provisional inputs.")
+    else:
+        st.caption("These choices are used only when writing DFM-preparation properties. The output also writes `DFNPorosity` and `DFNEffectiveStress_MPa`: T>Map values where present, otherwise the explicitly enabled depth-compaction fallback.")
     return facies_property, porosity_property, cement_property, stress_property
 
 
@@ -3084,6 +3519,7 @@ GEOMECHANICS_FORMULA_DEFAULTS = {
     "clean_sandstone_critical_porosity": {"Young ref (GPa)": 35.0, "Poisson": 0.22, "Friction": 0.60, "Cohesion (MPa)": 5.0, "Tensile (MPa)": 2.0, "Fracture energy (J/m²)": 50.0},
     "shale_porosity_stress": {"Young ref (GPa)": 20.0, "Poisson": 0.33, "Friction": 0.45, "Cohesion (MPa)": 3.0, "Tensile (MPa)": 1.0, "Fracture energy (J/m²)": 30.0},
     "carbonate_chalk_critical_porosity": {"Young ref (GPa)": 45.0, "Poisson": 0.28, "Friction": 0.55, "Cohesion (MPa)": 6.0, "Tensile (MPa)": 2.5, "Fracture energy (J/m²)": 60.0},
+    "crystalline_compact_framework": {"Young ref (GPa)": 60.0, "Poisson": 0.24, "Friction": 0.65, "Cohesion (MPa)": 10.0, "Tensile (MPa)": 5.0, "Fracture energy (J/m²)": 100.0},
 }
 
 
@@ -3101,15 +3537,187 @@ def apply_geomechanics_formula_defaults() -> None:
 
 
 @st.fragment
-def geomechanics_facies_editor(rows: list[dict]) -> pd.DataFrame:
+def geomechanics_facies_editor(rows: list[dict], classification_label: str = "Facies") -> pd.DataFrame:
+    table = pd.DataFrame(rows)
+    locked = [column for column in ("Facies", "Facies name", "T>Map data", "Diagenesis data") if column in table.columns]
     return st.data_editor(
-        pd.DataFrame(rows),
+        table,
         hide_index=True,
         key="tab4_facies_editor",
-        disabled=["Facies", "Facies name", "T>Map data"],
-        column_config={"Formula": st.column_config.SelectboxColumn("Formula", options=list(GEOMECHANICS_FORMULA_DEFAULTS))},
+        disabled=locked,
+        column_config={
+            "Facies": st.column_config.NumberColumn(classification_label),
+            "Facies name": st.column_config.TextColumn(f"{classification_label} name"),
+            "Formula": st.column_config.SelectboxColumn("Formula", options=list(GEOMECHANICS_FORMULA_DEFAULTS)),
+        },
         on_change=apply_geomechanics_formula_defaults,
     )
+
+
+def build_workflow_tabs(profile: str) -> tuple[list[object], object | None, object | None]:
+    """Return the six existing workflow containers plus profile-only tabs.
+
+    The hidden containers retain the mature MVP controls for reuse by the
+    applicable profiles. Their labels are hidden only inside this tab shell;
+    this keeps the visible navigation focused on the selected rock workflow.
+    """
+    mvp_labels = [
+        "FSM → FDM (GRDECL → 3D points)",
+        "FDM Append & View",
+        "FFM Geomech preparation",
+        "FFM Run DFM",
+        "FFM View results",
+    ]
+    inspection_tab = placeholder_tab = None
+    hidden_from: int | None = None
+    if profile == "Siliciclastics":
+        labels = [mvp_labels[0], mvp_labels[1], "Fault Seal Analysis", "Internal FFM geomech", "Internal FFM run", "Internal FFM results"]
+        mapping = [0, 1, 1, 3, 4, 5]
+        placeholder_index, hidden_from = 2, 4
+    elif profile == "Carbonates":
+        labels = ["FSM GRDECL → Mesh", "FDM Carbonate Diagenesis", *mvp_labels[2:], "Internal model preparation", "Internal FDM append", "Internal FDM review"]
+        mapping = [5, 6, 7, 2, 3, 4]
+        inspection_index, placeholder_index, hidden_from = 0, 1, 6
+    elif profile == "Crystalline rocks":
+        labels = ["GRDECL Inspect", *mvp_labels[2:], "Internal model preparation", "Internal FDM append", "Internal FDM review"]
+        mapping = [4, 5, 6, 1, 2, 3]
+        inspection_index, hidden_from = 0, 5
+    else:
+        labels = mvp_labels
+        # The FDM stage combines the existing append and appended-GRDECL
+        # review containers, so both tab2 and tab3 write into one visible tab.
+        mapping = [0, 1, 1, 2, 3, 4]
+
+    with st.container(key="workflow-tabs-shell"):
+        containers = st.tabs(labels)
+    if hidden_from is not None:
+        st.markdown(
+            f"""<style>
+            .st-key-workflow-tabs-shell [data-testid="stTab"]:nth-child(n + {hidden_from}) {{ display: none !important; }}
+            </style>""",
+            unsafe_allow_html=True,
+        )
+    if profile in {"Carbonates", "Crystalline rocks"}:
+        inspection_tab = containers[inspection_index]
+    if profile in {"Siliciclastics", "Carbonates"}:
+        placeholder_tab = containers[placeholder_index]
+    return [containers[index] for index in mapping], inspection_tab, placeholder_tab
+
+
+def classification_property_for_profile(grdecl: Path, profile: str) -> str | None:
+    """Find the categorical property used for facies or rock-type definitions."""
+    available = set(keyword_candidates(grdecl))
+    if profile == "Crystalline rocks":
+        preferred = ["RockType", "ROCKTYPE", "ROCK_TYPE", "Lithology", "LITHOLOGY", "LITHO", "Facies", "FACIES"]
+    else:
+        preferred = ["Facies", "FACIES", "Lithofacies", "LITHOFACIES", "Lithology", "LITHOLOGY", "RockType", "ROCKTYPE"]
+    return next((name for name in preferred if name in available), None)
+
+
+def render_profile_grdecl_inspection(profile: str) -> None:
+    """A lightweight source-grid loader for carbonate and crystalline profiles."""
+    left, right = st.columns([0.34, 0.66])
+    source_dir = ACTIVE_SOURCE_GRDECL_DIR
+    grdecl: Path | None = None
+    prop: str | None = None
+    with left:
+        st.subheader("FSM GRDECL → Mesh" if profile == "Carbonates" else "Inspect GRDECL model")
+        if profile == "Carbonates":
+            st.caption("Path: FSM GRDECL → finite-element mesh → GOLEM/PHREEQC carbonate diagenesis → re-appended GRDECL properties → DFM geomechanics.")
+            st.info("This stage imports and inspects the corner-point GRDECL, defines rock types, and will prepare an unstructured mesh plus CellIndex-to-mesh-element mapping. The mesh conversion is the planned GOLEM handoff; the source GRDECL remains the authoritative grid for later DFM preparation.")
+        else:
+            st.caption("Load a GRDECL from this project's source folder and inspect its geometry, rock types, and properties. No 3D-point conversion is used in this workflow profile.")
+        st.session_state["active_facies_config"] = str(source_dir / "facies_config.json")
+        st.caption(f"Source folder: {display_path(source_dir)}")
+        with st.expander("Import source GRDECL file(s)", expanded=not any(source_dir.glob("*.grdecl"))):
+            st.caption("Select one or more source files. The file browser shows all formats; only `.grdecl` files and an optional `facies_config.json` are copied into this project.")
+            source_grdecl_file_import_controls(f"{profile.lower().replace(' ', '_')}_source_import")
+        grdecl = file_selector("Source GRDECL", source_dir, ("*.grdecl", "*.GRDECL"), f"{profile}_inspection_grdecl")
+        if not grdecl:
+            st.info("Add a GRDECL to this project's source_grdecls folder to inspect it here.")
+        else:
+            dims = grdecl_dimensions(str(grdecl))
+            first, second = st.columns(2)
+            first.metric("Grid dimensions", f"{dims[0]} × {dims[1]} × {dims[2]}")
+            second.metric("Cells", f"{dims[0] * dims[1] * dims[2]:,}")
+            definition_label = "Rock type" if profile == "Crystalline rocks" else "Facies"
+            prop = grdecl_property_selector(grdecl, f"{profile}_inspection_property", definition_label)
+            classification_key = classification_property_for_profile(grdecl, profile)
+            if classification_key:
+                classification_codes = sorted({int(float(value)) for value in expand_values(tokenize_grdecl(grdecl, {classification_key})[classification_key])})
+                facies_config_editor(
+                    classification_codes,
+                    source_dir / "facies_config.json",
+                    source_dir,
+                    classification_key,
+                    f"{profile.lower().replace(' ', '_')}_facies_editor",
+                    include_tmap_flag=False,
+                    definition_label=definition_label,
+                )
+            if profile == "Carbonates":
+                mesh_dir = ACTIVE_APPROACHES["Moose/Golem diagenesis"]["point_dir"]
+                st.divider()
+                st.subheader("Prepare GOLEM mesh")
+                st.caption(f"Output: finite-element mesh, CellIndex-to-element mapping, and case inputs in {display_path(mesh_dir)}.")
+                st.button(
+                    "Prepare GOLEM mesh and CellIndex mapping",
+                    disabled=True,
+                    key="carbonate_prepare_golem_mesh",
+                    help="Scaffold only: this requires the GRDECL-to-finite-element-mesh converter and the agreed GOLEM material/boundary-condition template.",
+                )
+    with right:
+        if grdecl and prop:
+            df = grdecl_dataframe(str(grdecl), prop, max_rows)
+            visualization_panel(df, f"{profile}_inspection_view", prop, is_grdecl=True, grdecl_path=str(grdecl))
+
+
+def render_workflow_placeholder(profile: str) -> None:
+    if profile == "Siliciclastics":
+        st.subheader("Fault Seal Analysis")
+        st.info("Placeholder for the siliciclastic fault-seal stage. This will receive fault surfaces, juxtaposition relationships, clay/shale indicators, and fault-rock assumptions, then return seal-risk or transmissibility modifiers for later geothermal assessment.")
+    else:
+        left, right = st.columns([0.34, 0.66])
+        carbonate_approach = ACTIVE_APPROACHES["Moose/Golem diagenesis"]
+        raw_result_dir = carbonate_approach["tmap_dir"]
+        appended_dir = carbonate_approach["augmented_dir"]
+        with left:
+            st.subheader("FDM Carbonate Diagenesis")
+            st.caption("Workflow: GOLEM/PHREEQC mesh results → import result files → CellIndex re-append to the original GRDECL → inspect appended GRDECL → FFM Geomech preparation.")
+            st.markdown("""1. Run the mesh and GOLEM/PHREEQC case prepared in Tab 1 externally.
+2. Import the returned GOLEM result file(s) into this project.
+3. Re-append porosity, permeability and mineral results to the original GRDECL by CellIndex.
+4. Inspect the appended GRDECL in the viewer.
+5. Continue to FFM Geomech preparation.""")
+            st.subheader("Import GOLEM/PHREEQC result file(s)")
+            st.caption(f"External results are copied without format restrictions into {display_path(raw_result_dir)}.")
+            external_file_import_controls(
+                "carbonate_golem_results_import",
+                raw_result_dir,
+                "Select GOLEM/PHREEQC result file(s)",
+                "Copy selected GOLEM/PHREEQC result file(s) into project",
+            )
+            st.button(
+                "Re-append CellIndex-matched GOLEM results to GRDECL",
+                disabled=True,
+                key="carbonate_append_golem_results",
+                help="Scaffold only: this requires a defined GOLEM result schema and an element-to-CellIndex mapping file.",
+            )
+            st.divider()
+            st.caption(f"Re-appended GRDECLs will be written to {display_path(appended_dir)}. Tab 3, FFM Geomech preparation, reads that folder.")
+        with right:
+            appended_files = files_in(appended_dir, ("*.grdecl", "*.GRDECL"))
+            if not appended_files:
+                st.info("No carbonate-diagenesis GRDECL has been re-appended yet. Import GOLEM/PHREEQC results on the left, then use the CellIndex re-append step once its result schema is defined.")
+            else:
+                result_file = st.selectbox(
+                    "GRDECL with re-appended carbonate-diagenesis results",
+                    appended_files,
+                    format_func=lambda path: path.name,
+                    key="carbonate_diagenesis_result_view",
+                )
+                result_df = augmented_grdecl_dataframe(str(result_file), max_rows)
+                default_property = "Facies" if "Facies" in result_df.columns else "FACIES" if "FACIES" in result_df.columns else None
+                visualization_panel(result_df, "carbonate_diagenesis_result", default_property, is_grdecl=True, grdecl_path=str(result_file))
 
 
 st.title("GO-Forward: Integrated Forward Modelling Workflow")
@@ -3118,6 +3726,7 @@ st.caption("Prepare geological models for diagenesis, review returned properties
 with st.sidebar:
     st.image(ROOT / "GO-Forward-gros_transparent.png", width="stretch")
     st.header("Project")
+    clear_missing_workspace_file_state()
     existing_projects = project_names()
     available_projects = existing_projects.copy()
     if not available_projects:
@@ -3125,20 +3734,52 @@ with st.sidebar:
     default_project = DEFAULT_PROJECT_NAME if DEFAULT_PROJECT_NAME in available_projects else available_projects[0]
     if pending := st.session_state.pop("pending_project_selector", None):
         st.session_state["project_selector"] = pending
-    if "project_selector" not in st.session_state:
+    if st.session_state.get("project_selector") not in available_projects:
         st.session_state["project_selector"] = default_project
     active_project = st.selectbox("Select existing project", available_projects, key="project_selector")
-    new_project_name = st.text_input("New project name", placeholder="e.g. SS_201_Gassum_V1", key="project_new_name")
-    st.button("Create project", key="project_create", on_click=create_project, args=(new_project_name,))
+    active_profile = project_workflow_profile(active_project)
+    st.selectbox(
+        "Rock workflow",
+        list(WORKFLOW_PROFILES),
+        index=list(WORKFLOW_PROFILES).index(active_profile),
+        format_func=lambda profile: str(WORKFLOW_PROFILES[profile]["label"]),
+        key=f"project_workflow_display_{active_project}",
+        disabled=True,
+        help="Existing projects use the workflow encoded in their folder suffix. Legacy projects without a suffix are MVP projects.",
+    )
+    st.caption(str(WORKFLOW_PROFILES[active_profile]["description"]))
+    if result := st.session_state.pop("project_remove_result", None):
+        level, message = result
+        (st.success if level == "success" else st.warning if level == "warning" else st.error)(message)
+    if active_project in existing_projects:
+        if st.button("Remove project", key="project_remove_button"):
+            remove_project_dialog(active_project)
+    st.divider()
+    st.caption("Create project")
+    new_project_profile = st.selectbox(
+        "Type of new project",
+        ["", *WORKFLOW_PROFILES],
+        index=0,
+        format_func=lambda profile: "Select type of project" if not profile else str(WORKFLOW_PROFILES[profile]["label"]),
+        key="project_new_workflow",
+    )
+    new_project_name = st.text_input("New project name", placeholder="geothermal_project", key="project_new_name")
+    if new_project_profile:
+        suffix = str(WORKFLOW_PROFILES[new_project_profile]["suffix"])
+        st.caption(f"New project folder: `{new_project_name.strip().rstrip('_-') or 'geothermal_project'}_{suffix}`")
+    else:
+        st.caption("Choose a project type to set the workflow and project-folder suffix.")
+    st.button(
+        "Create project",
+        key="project_create",
+        on_click=create_project,
+        args=(new_project_name, new_project_profile),
+        disabled=not new_project_profile,
+    )
     if error := st.session_state.pop("project_create_error", None):
         st.error(error)
     if created := st.session_state.pop("project_created", None):
         st.success(f"Created and selected project: {created}")
-    if result := st.session_state.pop("project_remove_result", None):
-        level, message = result
-        (st.success if level == "success" else st.warning if level == "warning" else st.error)(message)
-    if active_project in existing_projects and st.button("Remove selected project", key="project_remove_button"):
-        remove_project_dialog(active_project)
     st.caption(f"Input: {display_path(INPUT_ROOT / active_project / 'source_grdecls')}")
     st.caption(f"Output: {display_path(OUTPUT_ROOT / active_project)}")
     st.divider()
@@ -3152,44 +3793,33 @@ ACTIVE_PROJECT_NAME = active_project
 ACTIVE_PROJECT_INPUT_DIR = INPUT_ROOT / ACTIVE_PROJECT_NAME
 ACTIVE_SOURCE_GRDECL_DIR = ACTIVE_PROJECT_INPUT_DIR / "source_grdecls"
 ACTIVE_PROJECT_OUTPUT_DIR = OUTPUT_ROOT / ACTIVE_PROJECT_NAME
-ACTIVE_APPROACHES = approaches_for_project(ACTIVE_PROJECT_OUTPUT_DIR)
+ACTIVE_APPROACHES = approaches_for_project(ACTIVE_PROJECT_OUTPUT_DIR, active_profile, ACTIVE_SOURCE_GRDECL_DIR)
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "1. Prepare models for diagenesis (FSM → FDM)",
-    "2. Diagenesis modelling data (T>Map)",
-    "3. Review diagenesis results",
-    "4. Prepare DFN inputs (FDM → FFM)",
-    "5. Run DFN Generator (FFM)",
-    "6. Review DFN results",
-])
+workflow_tabs, inspection_tab, workflow_placeholder_tab = build_workflow_tabs(active_profile)
+tab1, tab2, tab3, tab4, tab5, tab6 = workflow_tabs
+
+if inspection_tab is not None:
+    with inspection_tab:
+        render_profile_grdecl_inspection(active_profile)
+
+if workflow_placeholder_tab is not None:
+    with workflow_placeholder_tab:
+        render_workflow_placeholder(active_profile)
 
 with tab1:
     left, right = st.columns([0.34, 0.66])
     with left:
-        st.subheader("Prepare source models and 3D pointsets")
+        st.subheader("FSM → FDM: GRDECL → 3D points")
         st.caption("Input: source GRDECL. Action: define facies and create pointsets. Output: T>Map-ready 3D pointsets.")
-        source_grdecl_dir = source_folder_selector()
+        source_grdecl_dir = ACTIVE_SOURCE_GRDECL_DIR
         st.session_state["active_facies_config"] = str(source_grdecl_dir / "facies_config.json")
-        st.caption(display_path(source_grdecl_dir))
-        if result := st.session_state.pop("source_copy_result", None):
-            level, message = result
-            (st.success if level == "success" else st.error)(message)
-        try:
-            external_source = source_grdecl_dir.resolve() != ACTIVE_SOURCE_GRDECL_DIR.resolve()
-        except OSError:
-            external_source = source_grdecl_dir != ACTIVE_SOURCE_GRDECL_DIR
-        if external_source and source_grdecl_dir.is_dir():
-            st.info("This folder is outside the active project. Copy its source GRDECLs into the project before starting the workflow.")
-            replace_existing = st.checkbox("Replace same-named project files", value=False, key="copy_project_sources_replace")
-            st.button(
-                f"Copy source GRDECLs into project {ACTIVE_PROJECT_NAME}",
-                key="copy_project_sources",
-                on_click=copy_source_grdecls_into_project,
-                args=(str(source_grdecl_dir), str(ACTIVE_SOURCE_GRDECL_DIR), replace_existing),
-            )
+        st.caption(f"Project source folder: {display_path(source_grdecl_dir)}")
+        with st.expander("Import source GRDECL file(s)", expanded=not any(source_grdecl_dir.glob("*.grdecl"))):
+            st.caption("Select one or more source files. The file browser shows all formats; only `.grdecl` files and an optional `facies_config.json` are copied into this project.")
+            source_grdecl_file_import_controls("tab1_source_import")
         facies_key = None
         if not source_grdecl_dir.is_dir():
-            st.error("Choose an existing local folder containing GRDECL files.")
+            st.error("The project source folder is not available.")
         grdecl = file_selector("Source file", source_grdecl_dir, ("*.grdecl", "*.GRDECL"), "tab1_grdecl")
         if grdecl:
             prop = grdecl_property_selector(grdecl, "tab1_prop")
@@ -3337,7 +3967,13 @@ with tab1:
                 # an original-model or temporary preview.
                 st.session_state["tab1_viewer_source"] = "Converted 3D points"
                 st.rerun()
-        point_files = files_in(approach["point_dir"], ("*",))
+        # A crystalline project deliberately uses its source-GRDECL folder as
+        # the input to DFM preparation.  Do not mistake those GRDECL files for
+        # converted 3D point sets in the shared FSM→FDM viewer.
+        point_files = [
+            path for path in files_in(approach["point_dir"], ("*",))
+            if is_tmap_pointset_file(path)
+        ]
     with right:
         viewer_options = ["Original GRDECL cells"]
         if approach_name == "Best-fit model" and bestfit_reduced and grdecl and facies_key:
@@ -3430,7 +4066,7 @@ with tab1:
 with tab2:
     left, right = st.columns([0.34, 0.66])
     with left:
-        st.subheader("T>Map data and append")
+        st.subheader("FDM Append & View")
         st.caption("Input: T>Map-ready pointsets. Action: inspect returned data and append it. Output: diagenesis-enriched GRDECLs.")
         approach_name, approach = approach_selector("tab2_approach")
         pointset_files = [path for path in files_in(approach["point_dir"], ("*",)) if is_tmap_pointset_file(path)]
@@ -3459,79 +4095,83 @@ with tab2:
                     path for path in tmap_files
                     if source_pointset_for_returned(path, pointset_files) in pointset_files
                 ]
-            else:
-                selected_pointsets = pointset_files
-            status_rows = []
-            for pointset in pointset_files:
-                matching_returns = [
-                    returned for returned in tmap_files
-                    if source_pointset_for_returned(returned, pointset_files) == pointset
-                ]
-                has_synthetic = any("_tmap_synthetic" in returned.name for returned in matching_returns)
-                has_inferred = any("_tmap_inferred_geocosm" in returned.name for returned in matching_returns)
-                has_real = any("_tmap_synthetic" not in returned.name and "_tmap_inferred_geocosm" not in returned.name for returned in matching_returns)
-                status_parts = []
-                if has_real:
-                    status_parts.append("Real")
-                if has_inferred:
-                    status_parts.append("Inferred (Geocosm-calibrated)")
-                if has_synthetic:
-                    status_parts.append("Synthetic")
-                tmap_status = " & ".join(status_parts) if status_parts else "None"
-                status_rows.append({
-                    "Source 3D pointset": pointset.name,
-                    "T>Map data": tmap_status,
-                })
-            st.caption("Source 3D pointsets and matching returned T>Map data")
-            st.dataframe(pd.DataFrame(status_rows), hide_index=True, width="stretch")
+            if active_profile == "Siliciclastics":
+                with st.expander("Import returned T>Map file(s)", expanded=not tmap_files):
+                    st.caption(
+                        "Select one or more files received from T>Map. The native file browser lets you inspect "
+                        "the folder contents before choosing files. The dashboard matches each returned "
+                        "pointset to this approach using its T>Map provenance header, filename, or a unique row-count match. "
+                        f"Alternatively, copy returned files directly into {display_path(approach['tmap_dir'])}."
+                    )
+                    st.button(
+                        "Select returned T>Map file(s)",
+                        key="tab2_import_tmap_browse",
+                        on_click=choose_tmap_return_files_with_windows_explorer,
+                    )
+                    if import_error := st.session_state.pop("tab2_import_tmap_error", None):
+                        st.error(import_error)
+                    selected_return_paths = [
+                        Path(path).expanduser()
+                        for path in st.session_state.get("tab2_import_tmap_selected_paths", [])
+                    ]
+                    if selected_return_paths:
+                        import_rows, importable_files = tmap_return_import_rows(selected_return_paths, pointset_files)
+                        st.dataframe(pd.DataFrame(import_rows), hide_index=True, width="stretch")
+                        selected_imports = st.multiselect(
+                            "Matched returned files to copy",
+                            importable_files,
+                            default=importable_files,
+                            format_func=lambda path: path.name,
+                            key="tab2_import_tmap_files",
+                        )
+                        replace_returns = st.checkbox(
+                            "Replace same-named returned files already in the project",
+                            value=False,
+                            key="tab2_import_tmap_replace",
+                        )
+                        if st.button(
+                            f"Copy {len(selected_imports)} matched T>Map return(s) into project",
+                            key="tab2_import_tmap_copy",
+                            disabled=not selected_imports,
+                        ):
+                            approach["tmap_dir"].mkdir(parents=True, exist_ok=True)
+                            copied, skipped, failed = [], [], []
+                            for source in selected_imports:
+                                destination = approach["tmap_dir"] / source.name
+                                try:
+                                    same_location = source.resolve() == destination.resolve()
+                                except OSError:
+                                    same_location = source.parent == destination.parent
+                                if same_location or (destination.exists() and not replace_returns):
+                                    skipped.append(source.name)
+                                    continue
+                                try:
+                                    shutil.copy2(source, destination)
+                                    copied.append(source.name)
+                                except OSError as exc:
+                                    failed.append(f"{source.name}: {exc}")
+                            if copied:
+                                st.success(f"Copied {len(copied)} returned T>Map file(s) into {display_path(approach['tmap_dir'])}.")
+                            if skipped:
+                                st.warning("Skipped existing project files: " + ", ".join(skipped))
+                            if failed:
+                                st.error("Could not copy: " + "; ".join(failed))
+                            if copied:
+                                st.rerun()
+                    else:
+                        st.info("Select one or more returned T>Map pointset files to review and copy.")
             if renamed_returns:
                 st.success("Standardized returned T>Map filename(s): " + "; ".join(f"{old} → {new}" for old, new in renamed_returns))
-            st.info(
-                f"Run the selected source pointsets from {display_path(approach['point_dir'])} through T>Map. "
-                f"After T>Map has run, place its returned point-set file(s) in {display_path(approach['tmap_dir'])}, retaining the input filename and ID columns."
-            )
-            if not tmap_files:
-                st.info("No returned T>Map data are available yet. For MVP testing only, synthetic placeholder data can be generated below. They use deterministic facies/depth rules and the sample T>Map column schema; they are not calibrated from a real T>Map run.")
-            elif any("_tmap_inferred_geocosm" in path.name for path in tmap_files):
+            if any("_tmap_inferred_geocosm" in path.name for path in tmap_files):
                 st.warning("Geocosm-calibrated inferred files are a screening hypothesis trained from the supplied Base-model return. They are not a substitute for returned T>Map simulations.")
-            if approach_name == "Best-fit model":
-                selected_pointsets = st.multiselect(
-                    "Pointset models to generate synthetic T>Map data for",
-                    pointset_files,
-                    default=pointset_files,
-                    format_func=lambda path: f"{pointset_batch_and_scenario(path)[0]} — {pointset_batch_and_scenario(path)[1]}",
-                    key="tab2_bestfit_pointset_models",
-                )
-            st.caption(f"Selected input dataset: {len(selected_pointsets)} of {len(pointset_files)} 3D pointset file(s).")
-            if st.button("Generate synthetic T>Map data for selected dataset", key="generate_tmap", disabled=not selected_pointsets):
-                commands = approach["generate_tmap"]
-                if approach_name == "Best-fit model":
-                    commands = [
-                        [*command, "--source-dir", str(approach["point_dir"]), "--glob", path.name]
-                        for path in selected_pointsets
-                        for command in commands
-                    ]
-                if run_commands(commands):
-                    generated_files = [
-                        approach["tmap_dir"] / f"{pointset.name}_tmap_synthetic"
-                        for pointset in selected_pointsets
-                    ]
-                    generated_files = [path for path in generated_files if path.exists()]
-                    if generated_files:
-                        # Make the newly generated return the active inspection
-                        # dataset immediately after rerun. For Best-fit, also
-                        # preselect every generated model for the next append.
-                        st.session_state["tab2_tmap_file"] = generated_files[0]
-                        if approach_name == "Best-fit model":
-                            st.session_state["tab2_bestfit_append_files"] = generated_files
-                    st.rerun()
             if not tmap_files:
                 tmap_file = None
+                st.caption("No returned T>Map pointset is available for this source dataset yet.")
             else:
                 if approach_name == "Best-fit model":
-                    st.info("Select a returned T>Map point-set file below to inspect it. Use the explicit model list below to choose which returned files are appended to their corresponding GRDECLs.")
+                    st.caption("Select a returned T>Map pointset to inspect. Choose one or more matching returns below to append them to their corresponding GRDECLs.")
                 else:
-                    st.info("Select a returned T>Map point-set file below, inspect it in the viewer, then append the shared returned dataset to the selected realization workflow.")
+                    st.caption("Select a returned T>Map pointset to inspect in the viewer, then append it to the selected realization workflow.")
                 tmap_file = st.selectbox("Returned T>Map point-set file", tmap_files, format_func=lambda path: path.name, key="tab2_tmap_file")
                 st.caption(display_path(tmap_file))
                 if approach_name == "Best-fit model":
@@ -3577,55 +4217,121 @@ with tab2:
                 "The returned `Facies` and `point_id` columns are not written back, so the original GRDECL facies remain unchanged. "
                 f"The augmented GRDECL is written to: {display_path(approach['augmented_dir'])}"
             )
-    with right:
-        if tmap_file:
-            tmap_df = enrich_ijk_from_cell_index(pointset_dataframe(str(tmap_file), max_rows), source_grdecl_dir)
-            default = "total_porosity_mean" if "total_porosity_mean" in tmap_df.columns else None
-            visualization_panel(tmap_df, "tab2", default, is_grdecl="K" in tmap_df.columns)
-
-with tab3:
-    left, right = st.columns([0.34, 0.66])
-    with left:
-        st.subheader("Review diagenesis-enriched GRDECLs")
-        st.caption("Input: GRDECLs with appended T>Map properties. Action: inspect properties and coverage. Output: reviewed models for fracture preparation.")
-        approach_name, approach = approach_selector("tab3_approach")
-        folder_options = {"Full augmented GRDECLs": approach["augmented_dir"]}
-        if "petrel_augmented_dir" in approach:
-            folder_options["Petrel-standard GRDECLs"] = approach["petrel_augmented_dir"]
-        folder_label = st.radio("Output set", list(folder_options), key="tab3_output_set")
-        augmented_file = file_selector("Augmented file", folder_options[folder_label], ("*.grdecl", "*.GRDECL"), "tab3_augmented")
-        if augmented_file:
-            dims = grdecl_dimensions(str(augmented_file))
-            st.metric("Grid dimensions", f"{dims[0]} x {dims[1]} x {dims[2]}")
-            st.metric("Cells", f"{dims[0] * dims[1] * dims[2]:,}")
-            facies_coverage_property, diagenetic_coverage_property = coverage_properties(augmented_file)
+        appended_coverage_files = files_in(approach["augmented_dir"], ("*.grdecl", "*.GRDECL"))
+        if appended_coverage_files:
+            st.divider()
+            st.subheader("Appended GRDECL coverage")
+            coverage_file = st.selectbox(
+                "Appended GRDECL to count",
+                appended_coverage_files,
+                format_func=lambda path: path.name,
+                key="tab2_coverage_grdecl",
+            )
+            dims = grdecl_dimensions(str(coverage_file))
+            facies_coverage_property, diagenetic_coverage_property = coverage_properties(coverage_file)
+            metrics = st.columns(3)
+            metrics[0].metric("Grid cells", f"{dims[0] * dims[1] * dims[2]:,}")
             if facies_coverage_property and diagenetic_coverage_property:
                 defined_facies, defined_diagenetic = grdecl_coverage_counts(
-                    str(augmented_file), facies_coverage_property, diagenetic_coverage_property
+                    str(coverage_file), facies_coverage_property, diagenetic_coverage_property
                 )
-                st.metric("Defined facies cells", f"{defined_facies:,}")
-                st.metric("Defined diagenetic cells", f"{defined_diagenetic:,}")
-                st.caption(f"Diagenetic coverage is counted from `{diagenetic_coverage_property}` only.")
-            st.caption("All cell-sized GRDECL properties are available in the Property viewer.")
-            st.caption("A `-77777` value indicates that the facies was toggled non-reservoir in Tab 1 Facies definitions, was therefore excluded from T>Map modelling, and has no appended T>Map value.")
+                metrics[1].metric("Defined facies", f"{defined_facies:,}")
+                metrics[2].metric("Diagenetic cells", f"{defined_diagenetic:,}")
+                st.caption(f"Diagenetic coverage is counted from `{diagenetic_coverage_property}`. `-77777` indicates a facies excluded from T>Map modelling.")
+            else:
+                metrics[1].metric("Defined facies", "—")
+                metrics[2].metric("Diagenetic cells", "—")
+                st.caption("No facies/T>Map property pair could be identified for this GRDECL.")
     with right:
-        if augmented_file:
-            df = augmented_grdecl_dataframe(str(augmented_file), max_rows)
-            default_property = "Facies" if "Facies" in df.columns else "FACIES" if "FACIES" in df.columns else None
-            visualization_panel(df, "tab3", default_property, is_grdecl=True, grdecl_path=str(augmented_file))
+        augmented_files = files_in(approach["augmented_dir"], ("*.grdecl", "*.GRDECL"))
+        viewer_options: list[str] = []
+        if pointset_files:
+            viewer_options.append("Original 3D point set")
+        if tmap_file:
+            viewer_options.append("Appended 3D point set")
+        if augmented_files:
+            viewer_options.append("Appended GRDECL")
+        if viewer_options:
+            default_view = "Appended 3D point set" if "Appended 3D point set" in viewer_options else viewer_options[0]
+            viewer_source = st.radio(
+                "Viewer data",
+                viewer_options,
+                index=viewer_options.index(default_view),
+                horizontal=True,
+                key="tab2_viewer_source",
+            )
+        else:
+            viewer_source = None
+            st.info("Create source 3D point sets in FSM → FDM, then this stage can display original, appended, and augmented data.")
+        if viewer_source == "Original 3D point set":
+            pointset_file = st.selectbox(
+                "Original 3D point set",
+                pointset_files,
+                format_func=lambda path: path.name,
+                key="tab2_original_pointset_view",
+            )
+            pointset_df = enrich_ijk_from_cell_index(pointset_dataframe(str(pointset_file), max_rows), source_grdecl_dir)
+            visualization_panel(
+                pointset_df,
+                "tab2_original_points",
+                "Facies" if "Facies" in pointset_df.columns else None,
+                is_grdecl="K" in pointset_df.columns,
+            )
+        elif viewer_source == "Appended 3D point set" and tmap_file:
+            tmap_df = enrich_ijk_from_cell_index(pointset_dataframe(str(tmap_file), max_rows), source_grdecl_dir)
+            default = "total_porosity_mean" if "total_porosity_mean" in tmap_df.columns else None
+            visualization_panel(tmap_df, "tab2_appended_points", default, is_grdecl="K" in tmap_df.columns)
+        elif viewer_source == "Appended GRDECL":
+            augmented_file = st.selectbox(
+                "Appended GRDECL",
+                augmented_files,
+                format_func=lambda path: path.name,
+                key="tab2_appended_grdecl_file",
+            )
+            augmented_df = augmented_grdecl_dataframe(str(augmented_file), max_rows)
+            default = "Facies" if "Facies" in augmented_df.columns else "FACIES" if "FACIES" in augmented_df.columns else None
+            visualization_panel(augmented_df, "tab2_appended_grdecl", default, is_grdecl=True, grdecl_path=str(augmented_file))
+
+with tab3:
+    # The merged FDM Append & View tab presents coverage immediately after the
+    # append action, next to the returned-file workflow above.
+    pass
 
 with tab4:
     left, right = st.columns([0.42, 0.58])
     with left:
-        st.subheader("Prepare fracture-model inputs")
-        st.caption("Input: diagenesis-enriched GRDECL. Action: assign geomechanical properties. Output: DFN-ready GRDECL.")
+        st.subheader("FFM Geomech preparation")
+        input_stage = "source GRDECL" if active_profile == "Crystalline rocks" else "diagenesis-enriched GRDECL"
+        if active_profile == "Carbonates":
+            st.caption("Input: a DionisosFlow source GRDECL or a GOLEM/PHREEQC re-appended GRDECL. Action: assign geomechanical properties. Output: DFM-ready GRDECL.")
+        else:
+            st.caption(f"Input: {input_stage}. Action: assign geomechanical properties. Output: DFM-ready GRDECL.")
         st.caption("Empirical porosity/cement/stress estimates for DFN preparation. Calibrate all values against laboratory, log, or rock-physics constraints before use.")
         geomech_approach_name, geomech_approach = approach_selector("tab4_approach")
-        geomech_input = file_selector("Augmented GRDECL", geomech_approach["augmented_dir"], ("*.grdecl", "*.GRDECL"), "tab4_input")
+        geomech_input_dir = geomech_approach["augmented_dir"]
+        if active_profile == "Carbonates":
+            result_dir = geomech_approach["augmented_dir"]
+            source_dir = ACTIVE_SOURCE_GRDECL_DIR
+            available_sources = {"DionisosFlow/source GRDECL": source_dir}
+            if files_in(result_dir, ("*.grdecl", "*.GRDECL")):
+                available_sources["GOLEM/PHREEQC re-appended GRDECL"] = result_dir
+            input_stage = st.radio(
+                "Geomechanics input source",
+                list(available_sources),
+                horizontal=True,
+                key="tab4_carbonate_input_stage",
+            )
+            geomech_input_dir = available_sources[input_stage]
+            st.caption(
+                "Use a DionisosFlow GRDECL directly when it already contains porosity or mineral/cement properties. "
+                "Switch to the re-appended option once GOLEM/PHREEQC results are available."
+            )
+        geomech_input = file_selector(input_stage, geomech_input_dir, ("*.grdecl", "*.GRDECL"), "tab4_input")
         if geomech_input:
+            classification_label = "Rock type" if active_profile == "Crystalline rocks" else "Carbonate facies" if active_profile == "Carbonates" else "Facies"
             geomech_targets = [geomech_input]
-            if geomech_approach_name != "Best-fit model":
-                available_geomech_models = files_in(geomech_approach["augmented_dir"], ("*.grdecl", "*.GRDECL"))
+            if active_profile in {"MVP", "Siliciclastics"} and geomech_approach_name != "Best-fit model":
+                available_geomech_models = files_in(geomech_input_dir, ("*.grdecl", "*.GRDECL"))
                 geomech_targets = st.multiselect(
                     "Multi-realization GRDECLs to prepare for DFN",
                     available_geomech_models,
@@ -3634,14 +4340,32 @@ with tab4:
                     key="tab4_geomech_targets",
                     help="All augmented realizations are selected by default. You may select a smaller subset.",
                 )
-                st.caption(f"The same facies configuration and selected input properties will be applied to {len(geomech_targets)} selected realization(s).")
+                st.caption(f"The same {classification_label.lower()} configuration and selected input properties will be applied to {len(geomech_targets)} selected realization(s).")
             properties = grdecl_property_keywords(geomech_input)
-            facies_property, porosity_property, cement_property, stress_property = geomechanics_property_selectors(properties)
+            facies_property, porosity_property, cement_property, stress_property = geomechanics_property_selectors(
+                properties, classification_label, active_profile
+            )
             output_dir = geomech_approach["dfn_dir"]
             st.subheader("Model used and parameter guidance")
             st.latex(r"E=E_{ref}(1-\phi/\phi_c)^n(1+a_cC)(1+a_\sigma\sigma/\sigma_{ref})")
             st.latex(r"G=E/[2(1+\nu)],\qquad K=E/[3(1-2\nu)]")
-            st.markdown("""**Formula options**
+            if active_profile == "Crystalline rocks":
+                st.markdown("""**Rock-type assignment**
+
+- **Crystalline compact framework:** a critical-porosity starting curve for low-porosity crystalline rock. It is suitable as an initial assignment for granite, gneiss, and contact-metamorphic rocks, then calibrated by rock type.
+- **Shear zones or weathered rock:** assign a lower Young reference modulus and cohesion, and a higher porosity or explicit depth-compaction fallback where justified.
+
+The starting values are deliberately transparent rather than a substitute for laboratory data: `Young ref 60 GPa`, Poisson's ratio `0.24`, friction `0.65`, cohesion `10 MPa`, tensile strength `5 MPa`, and fracture energy `100 J/m²`. Adjust each rock type to available core, log, or regional geomechanical constraints.""")
+            elif active_profile == "Carbonates":
+                st.markdown("""**Carbonate-facies assignment**
+
+- **Carbonate/chalk, critical porosity:** the default, using selected porosity and an optional mineral/cement multiplier. This is the appropriate starting model for reef framework, grainstone, packstone, wackestone, and chalk-like facies.
+- **Mineral or cement property:** select a re-appended GOLEM/PHREEQC field such as calcite, dolomite, anhydrite, gypsum, or cement only if its value is a meaningful fraction or percentage for the chosen multiplier. It should be calibrated before use.
+- **Porosity and effective stress:** use the re-appended diagenesis porosity and any available effective-stress property. The optional fallback is deliberately provisional and is not a substitute for the reaction model.
+
+Without Vp/Vs, Poisson's ratio is assigned rather than calculated. Initial carbonate/chalk range: `0.20–0.35`. `Young ref`, friction, cohesion, tensile strength, and fracture energy remain user-assigned DFM inputs and should be calibrated to the carbonate rock type and degree of cementation.""")
+            else:
+                st.markdown("""**Formula options**
 
 - **Clean sandstone, critical porosity:** optional quartz/total-cement and effective-stress multipliers.
 - **Shale, porosity and stress:** porosity/effective-stress trend; cement is not applied.
@@ -3649,7 +4373,7 @@ with tab4:
 
 Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: clean sandstone `0.15–0.30`, shale `0.25–0.40`, carbonate `0.20–0.35`, chalk `0.25–0.35`.
 
-            `Young ref` is the zero-porosity reference modulus. Defaults are critical porosity `0.40`, porosity exponent `2`, cement factor `2`, and stress factor `0`. Friction, cohesion, tensile strength, and fracture energy are user-assigned DFN inputs, not inferred from T>Map.""")
+            `Young ref` is the zero-porosity reference modulus. Defaults are critical porosity `0.40`, porosity exponent `2`, cement factor `2`, and stress factor `0`. Friction, cohesion, tensile strength, and fracture energy are user-assigned DFM inputs, not inferred from T>Map.""")
             codes = sorted({int(float(value)) for value in expand_values(tokenize_grdecl(geomech_input, {facies_property})[facies_property])})
             # The configuration belongs to the DFN-preparation output step,
             # alongside the resulting GRDECLs, rather than the augmented
@@ -3673,7 +4397,11 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
                 "fallback_effective_stress_gradient_mpa_per_m": 0.015,
                 "fallback_depth_datum_m": 0.0,
             }
-            shale_fallback, fallback_values = shale_fallback_controls(config.get("defaults", {}), defaults)
+            shale_fallback, fallback_values = shale_fallback_controls(
+                config.get("defaults", {}), defaults,
+                crystalline=active_profile == "Crystalline rocks",
+                carbonate=active_profile == "Carbonates",
+            )
             defaults.update(fallback_values)
             write_dipazimuth = st.checkbox(
                 "Add locally smoothed DIPAZIMUTH from the model-top horizon",
@@ -3692,22 +4420,40 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
                 )
                 st.caption("`DIPAZIMUTH` follows the locally smoothed model-top-horizon contours and is written in degrees clockwise from North. Michael's example property values of 65–115 confirm that GRDECL property values are degrees, despite its configuration comment mentioning radians.")
             facies_names = read_facies_names()
-            tmap_coverage = facies_tmap_coverage(str(geomech_input), facies_property, porosity_property)
+            tmap_coverage = (
+                {} if active_profile == "Crystalline rocks"
+                else facies_tmap_coverage(str(geomech_input), facies_property, porosity_property)
+            )
             rows = []
             for code in codes:
                 p = {**defaults, **config.get("defaults", {}), **config.get("facies", {}).get(str(code), {})}
-                formula = p.get("formula", "clean_sandstone_critical_porosity")
+                default_formula = (
+                    "crystalline_compact_framework" if active_profile == "Crystalline rocks"
+                    else "carbonate_chalk_critical_porosity" if active_profile == "Carbonates"
+                    else "clean_sandstone_critical_porosity"
+                )
+                formula = p.get("formula", default_formula)
                 _, tmap_cells = tmap_coverage.get(code, (0, 0))
                 tmap_status = "T>Map" if tmap_cells else "No T>Map"
-                rows.append({"Facies": code, "Facies name": facies_names.get(code, f"Facies {code}"), "T>Map data": tmap_status, "Formula": formula, "Young ref (GPa)": p.get("young_reference_gpa", 30.0), "Poisson": p.get("poissons_ratio", 0.25), "Friction": p.get("friction_coefficient", 0.6), "Cohesion (MPa)": p.get("cohesion_mpa", 5.0), "Tensile (MPa)": p.get("tensile_strength_mpa", 2.0), "Fracture energy (J/m²)": p.get("fracture_energy_j_m2", 50.0)})
+                row = {"Facies": code, "Facies name": facies_names.get(code, f"{classification_label} {code}"), "Formula": formula, "Young ref (GPa)": p.get("young_reference_gpa", 60.0 if active_profile == "Crystalline rocks" else 30.0), "Poisson": p.get("poissons_ratio", 0.24 if active_profile == "Crystalline rocks" else 0.25), "Friction": p.get("friction_coefficient", 0.65 if active_profile == "Crystalline rocks" else 0.6), "Cohesion (MPa)": p.get("cohesion_mpa", 10.0 if active_profile == "Crystalline rocks" else 5.0), "Tensile (MPa)": p.get("tensile_strength_mpa", 5.0 if active_profile == "Crystalline rocks" else 2.0), "Fracture energy (J/m²)": p.get("fracture_energy_j_m2", 100.0 if active_profile == "Crystalline rocks" else 50.0)}
+                if active_profile == "Carbonates":
+                    row["Diagenesis data"] = "GOLEM/PHREEQC" if tmap_cells else "No diagenesis data"
+                elif active_profile != "Crystalline rocks":
+                    row["T>Map data"] = tmap_status
+                rows.append(row)
             st.session_state["tab4_geomech_row_codes"] = {
                 index: int(row["Facies"]) for index, row in enumerate(rows)
             }
             saved_formulas = st.session_state.setdefault("tab4_geomech_formulas", {})
             for row in rows:
                 saved_formulas.setdefault(str(int(row["Facies"])), str(row["Formula"]))
-            edited = geomechanics_facies_editor(rows)
-            st.caption(f"`T>Map data` is read from `{porosity_property}` in the selected augmented GRDECL. Use `No T>Map` facies to identify where the shale depth-compaction fallback is relevant.")
+            edited = geomechanics_facies_editor(rows, classification_label)
+            if active_profile == "Crystalline rocks":
+                st.caption(f"Rock types are read from `{facies_property}` and their porosity from `{porosity_property}`. The selected formula and parameters are written for every rock type into the DFM-preparation GRDECL.")
+            elif active_profile == "Carbonates":
+                st.caption(f"Carbonate facies are read from `{facies_property}`. `{porosity_property}` and the optional mineral/cement property are expected to come from a GOLEM/PHREEQC result re-appended to the GRDECL; the source-grid values are used provisionally until that step is available.")
+            else:
+                st.caption(f"`T>Map data` is read from `{porosity_property}` in the selected GRDECL. Use `No T>Map facies` to identify where the shale depth-compaction fallback is relevant.")
             edited_config = {"defaults": defaults, "facies": {str(int(row["Facies"])): {"formula": str(row["Formula"]), "young_reference_gpa": float(row["Young ref (GPa)"]), "poissons_ratio": float(row["Poisson"]), "friction_coefficient": float(row["Friction"]), "cohesion_mpa": float(row["Cohesion (MPa)"]), "tensile_strength_mpa": float(row["Tensile (MPa)"]), "fracture_energy_j_m2": float(row["Fracture energy (J/m²)"])} for _, row in edited.iterrows()}}
             write_label = (
                 "Write geomechanical DFN-preparation GRDECL"
@@ -3753,11 +4499,12 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
         if geomech_input:
             output_dir = geomech_approach["dfn_dir"]
             dfn_files = files_in(output_dir, ("*.grdecl", "*.GRDECL"))
-            viewer_options = ["Input augmented GRDECL"] + (["DFN-preparation GRDECL"] if dfn_files else [])
+            input_view_label = "Input GRDECL" if active_profile in {"Carbonates", "Crystalline rocks"} else "Input augmented GRDECL"
+            viewer_options = [input_view_label] + (["DFN-preparation GRDECL"] if dfn_files else [])
             viewer_choice = st.radio("Viewer data", viewer_options, horizontal=True, key="tab4_viewer_choice")
             viewer_file = st.selectbox("DFN-preparation file", dfn_files, format_func=lambda path: path.name, key="tab4_dfn_file") if viewer_choice == "DFN-preparation GRDECL" else geomech_input
             viewer_df = augmented_grdecl_dataframe(str(viewer_file), max_rows)
-            default_property = "Facies" if "Facies" in viewer_df.columns else "FACIES" if "FACIES" in viewer_df.columns else None
+            default_property = preferred_classification_property(list(viewer_df.columns))
             visualization_panel(viewer_df, "tab4_viewer", default_property, is_grdecl=True, grdecl_path=str(viewer_file))
             if viewer_choice == "DFN-preparation GRDECL":
                 st.caption("Inspect `DFNPorosity`, `DFNEffectiveStress_MPa`, and `DIPAZIMUTH` to verify the values passed to DFN Generator. `YoungsModulus_Pa` is written in the units required by the executable; `DIPAZIMUTH` is degrees clockwise from North.")
@@ -3765,7 +4512,7 @@ Without Vp/Vs, Poisson’s ratio is assigned, not calculated. Initial ranges: cl
 with tab5:
     left, right = st.columns([0.42, 0.58])
     with left:
-        st.subheader("Run DFN Generator")
+        st.subheader("FFM Run DFM")
         st.caption("Input: DFN-prepared GRDECLs. Action: write Michael's GRDECL configuration and launch the executable in the background. Output: staged fracture GRDECLs, FAB and ASCII DFNs.")
         selected_dfn_inputs: list[Path] = []
         input_mode = st.radio("DFN input", ["Project DFN-prepared GRDECL", "Michael's supplied demo grid"], horizontal=True, key="tab5_input_mode")
@@ -3842,7 +4589,6 @@ with tab5:
                 settings["ehmin_azimuth_property"] = st.selectbox(
                     "Minimum-strain azimuth property (degrees)",
                     azimuth_options,
-                    index=property_option_index(azimuth_options, "DIPAZIMUTH"),
                     key="tab5_azimuth_property",
                     help="Select Tab 4's planar-smoothed DIPAZIMUTH field to use a grid-varying direction. Dashboard values are degrees; the temporary DFN handoff converts them to radians. If no property is selected, the scalar value above is written in radians.",
                 )
@@ -3856,15 +4602,15 @@ with tab5:
                 st.caption("Choose a GRDECL property where available; otherwise the supplied default value is written. Young's modulus must be in Pa when a property is selected.")
                 property_options = ["Use default", *properties]
                 mechanical = st.columns(2)
-                settings["youngs_property"] = mechanical[0].selectbox("Young's modulus property (Pa)", property_options, index=property_option_index(property_options, "YoungsModulus_Pa"), key="tab5_young_prop")
+                settings["youngs_property"] = mechanical[0].selectbox("Young's modulus property (Pa)", property_options, key="tab5_young_prop")
                 settings["youngs_default_gpa"] = mechanical[1].number_input("Default Young's modulus (GPa)", min_value=0.01, value=10.0, key="tab5_young_default")
-                settings["poisson_property"] = mechanical[0].selectbox("Poisson's ratio property", property_options, index=property_option_index(property_options, "PoissonsRatio"), key="tab5_poisson_prop")
+                settings["poisson_property"] = mechanical[0].selectbox("Poisson's ratio property", property_options, key="tab5_poisson_prop")
                 settings["poisson_default"] = mechanical[1].number_input("Default Poisson's ratio", min_value=0.001, max_value=0.499, value=0.25, key="tab5_poisson_default")
-                settings["porosity_property"] = mechanical[0].selectbox("Host-rock porosity property", property_options, index=property_option_index(property_options, "DFNPorosity"), key="tab5_porosity_prop")
+                settings["porosity_property"] = mechanical[0].selectbox("Host-rock porosity property", property_options, key="tab5_porosity_prop")
                 settings["porosity_default"] = mechanical[1].number_input("Default host-rock porosity", min_value=0.0, max_value=0.9, value=0.2, key="tab5_porosity_default")
-                settings["friction_property"] = mechanical[0].selectbox("Friction coefficient property", property_options, index=property_option_index(property_options, "FrictionCoefficient"), key="tab5_friction_prop")
+                settings["friction_property"] = mechanical[0].selectbox("Friction coefficient property", property_options, key="tab5_friction_prop")
                 settings["friction_default"] = mechanical[1].number_input("Default friction coefficient", min_value=0.0, max_value=2.0, value=0.5, key="tab5_friction_default")
-                settings["fracture_energy_property"] = mechanical[0].selectbox("Crack surface-energy property", property_options, index=property_option_index(property_options, "FractureEnergy_J_m2"), key="tab5_energy_prop")
+                settings["fracture_energy_property"] = mechanical[0].selectbox("Crack surface-energy property", property_options, key="tab5_energy_prop")
                 settings["fracture_energy_default"] = mechanical[1].number_input("Default crack surface energy (J/m²)", min_value=0.1, value=1000.0, key="tab5_energy_default")
                 settings["biot_default"] = st.number_input("Biot coefficient", min_value=0.0, max_value=1.5, value=1.0, key="tab5_biot")
                 settings["thermal_expansion_default"] = st.number_input("Thermal expansion coefficient (/K)", min_value=0.0, value=4e-5, format="%.2e", key="tab5_thermal")
@@ -4004,7 +4750,7 @@ with tab5:
                     st.session_state["tab5_run_folder"] = run_root / launched[-1]
                     st.success(f"Launched {len(launched)} DFN run(s): {', '.join(launched)}. The status panel on the right now refreshes every 5 seconds and shows elapsed time plus the live executable log.")
     with right:
-        st.subheader("DFN run status")
+        st.subheader("FFM run status")
         result_source = st.radio("Run source", ["Dashboard run", "Michael's supplied demo output"], horizontal=True, key="tab5_result_source")
         if result_source == "Michael's supplied demo output":
             demo_results = files_in(DFN_DEMO_OUTPUT_DIR, ("*.GRDECL", "*.grdecl"))
@@ -4054,7 +4800,7 @@ with tab5:
             st.markdown("""The dashboard writes the same text configuration structure as the supplied `DFMGenerator_GRDECL_configuration.txt`, invokes `DFMGenerator_GRDECL.exe <configfilename>` through a detached Python runner, and preserves the input crop/copy, configuration, manifest, status and log together. Tab 4 supplies direct selectable GRDECL fields for Young's modulus in Pa, Poisson's ratio, friction and fracture energy. Dynamic stress loads, multiple deformation episodes, cleavages, and full unconfined-fracture settings remain future extensions pending calibration decisions.""")
 
 with tab6:
-    st.subheader("Review DFN results")
+    st.subheader("FFM View results")
     st.caption("Inspect staged DFN GRDECL output independently from the run controls. Continuous properties use their own valid data range, excluding no-value flags.")
     result_source = st.radio(
         "Result source",

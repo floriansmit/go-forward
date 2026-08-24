@@ -14,7 +14,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INPUT = ROOT / "input"
+DATA_ROOT = ROOT / "data"
+ORIGINAL_GRDECL_FOLDER = "0_original_grdecl"
 
 
 def write_values(handle, values: list[float | int], per_line: int = 8) -> None:
@@ -119,8 +120,8 @@ def write_model(path: Path, kind: str) -> None:
 
 
 def write_project(name: str, profile: str, filename: str, kind: str, names: dict[str, str], colours: dict[str, str]) -> None:
-    project_dir = INPUT / name
-    source_dir = project_dir / "source_grdecls"
+    project_dir = DATA_ROOT / name
+    source_dir = project_dir / ORIGINAL_GRDECL_FOLDER
     write_model(source_dir / filename, kind)
     (project_dir / "project_config.json").write_text(
         json.dumps({"project_name": name, "workflow_profile": profile, "workflow_suffix": "carbonates" if profile == "Carbonates" else "crystalline"}, indent=2) + "\n",
@@ -140,7 +141,7 @@ def write_project(name: str, profile: str, filename: str, kind: str, names: dict
 
 def main() -> None:
     write_project(
-        "Carbonate_Reef_Demo_carbonates",
+        "Reef_Demo_carbonates",
         "Carbonates",
         "carbonate_reef_demo.grdecl",
         "carbonate",

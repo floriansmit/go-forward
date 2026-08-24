@@ -11,8 +11,8 @@ from facies_config import DEFAULT_CONFIG_PATH, facies_label
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
-DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization control approach" / "01_control_pointsets_by_facies"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization control approach" / "01_control_pointsets_by_facies"
 
 
 def safe_name(text: str) -> str:

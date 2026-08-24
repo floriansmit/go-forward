@@ -9,12 +9,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIR = ROOT / "outputs" / "Best-fit approach" / "01_3d_points_from_original_grdecls"
+SOURCE_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Best-fit approach" / "01_3d_points_from_original_grdecls"
 # Use the current Geocosm export as the default header template.  Synthetic
 # files remain explicitly marked synthetic in their filename and comments, but
 # their attributes now look like a returned T>Map dataset.
 EXAMPLE = ROOT / "reference_examples" / "tmap_example" / "gassum_base_tmap.txt"
-OUTPUT_DIR = ROOT / "outputs" / "Best-fit approach" / "02_3d_points_with_tmap_data"
+OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Best-fit approach" / "02_3d_points_with_tmap_data"
 
 DEFAULT_TMAP_HEADER_COLUMNS = [
     "X",

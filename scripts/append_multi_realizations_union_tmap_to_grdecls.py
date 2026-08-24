@@ -8,9 +8,9 @@ from grdecl_utils import grdecl_keyword, path_for_io, tokenize_grdecl, write_pro
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
-DEFAULT_POINTSET_DIR = ROOT / "outputs" / "Multi-realization union approach" / "02_union_pointsets_with_tmap_data"
-DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization union approach" / "03_augmented_grdecls_from_union_lookup"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_POINTSET_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization union approach" / "02_union_pointsets_with_tmap_data"
+DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization union approach" / "03_augmented_grdecls_from_union_lookup"
 NO_VALUE = "-77777"
 IDENTITY_COLUMNS = {"x", "y", "z", "facies", "realization", "cellindex", "point_id", "pointid", "controlcolumn"}
 

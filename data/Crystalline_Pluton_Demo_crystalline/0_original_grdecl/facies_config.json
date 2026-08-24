@@ -1,6 +1,6 @@
 {
   "facies_property": "RockType",
-  "source_grdecl_directory": "input/Crystalline_Pluton_Demo_crystalline/source_grdecls",
+  "source_grdecl_directory": "data/Crystalline_Pluton_Demo_crystalline/0_original_grdecl",
   "source_grdecl_files": [
     "crystalline_pluton_demo.grdecl"
   ],

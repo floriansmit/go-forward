@@ -1,0 +1,43 @@
+{
+  "facies_property": "Facies",
+  "source_grdecl_directory": "input/Carbonate_Reef_Demo_carbonates/source_grdecls",
+  "source_grdecl_files": [
+    "carbonate_reef_demo.grdecl"
+  ],
+  "facies_names": {
+    "1": "Reef crest framework boundstone",
+    "2": "Reef flank grainstone-packstone",
+    "3": "Back-reef lagoonal wackestone",
+    "4": "Fore-reef slope packstone",
+    "5": "Basinal mudstone-marl"
+  },
+  "facies_colors": {
+    "1": "#d62728",
+    "2": "#ffbf00",
+    "3": "#66c2a5",
+    "4": "#8da0cb",
+    "5": "#6b6b6b"
+  },
+  "facies_metadata": {
+    "1": {
+      "category": "reservoir",
+      "tmap_enabled": true
+    },
+    "2": {
+      "category": "reservoir",
+      "tmap_enabled": true
+    },
+    "3": {
+      "category": "non_reservoir",
+      "tmap_enabled": true
+    },
+    "4": {
+      "category": "non_reservoir",
+      "tmap_enabled": true
+    },
+    "5": {
+      "category": "non_reservoir",
+      "tmap_enabled": true
+    }
+  }
+}

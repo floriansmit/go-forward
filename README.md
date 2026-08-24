@@ -1,166 +1,109 @@
 # GO-Forward integrated forward modelling workflow
 
-This repository provides a reproducible workflow from DionisosFlow/Eclipse GRDECL models through T>Map diagenesis modelling, DFN-property preparation, and the future DFM/DFN Generator handoff.
+GO-Forward is a local Streamlit dashboard and a set of reproducible Python tools for preparing corner-point GRDECL models for diagenetic and dynamic fracture modelling (DFM). It supports several geological workflow profiles from one project-level interface.
 
-It includes a Streamlit dashboard for inspecting data and running the commands, plus standalone Python scripts for batch processing and reproducible execution. The supplied example outputs are synthetic: they show the full round trip without requiring a live T>Map calculation.
+## Workflow profiles
 
-## What the workflow does
+| Project type | Dashboard path | Current purpose |
+| --- | --- | --- |
+| **MVP** | FSM → FDM → FFM → DFM | Demonstrates the full DionisosFlow, T>Map, geomechanics, and DFM chain. |
+| **Siliciclastics** | GRDECL → 3D points → T>Map → re-appended GRDECL | Production-oriented T>Map handoff with a Fault Seal Analysis placeholder. |
+| **Carbonates** | FSM GRDECL → mesh → GOLEM/PHREEQC → re-appended GRDECL → DFM | Carbonate mesh/diagenesis handoff is scaffolded; direct DionisosFlow properties can already feed geomechanics. |
+| **Crystalline rocks** | GRDECL inspection → geomechanics → DFM | Uses RockType/Lithology definitions rather than sedimentary facies. |
 
-1. Reads one or more GRDECL models containing geometry (`SPECGRID`, `COORD`, `ZCORN`) and an integer facies property.
-2. Builds T>Map 3D point sets that preserve cell identity.
-3. Sends those point sets to T>Map, or creates synthetic T>Map-style properties for demonstration/testing.
-4. Appends or interpolates the returned properties back onto the original GRDECL grids.
-5. Creates facies-aware DFN-preparation geomechanical GRDECLs.
-6. Prepares a reproducible handoff to a GRDECL-capable DFM/DFN Generator executable.
-
-The same source grids can be processed with four alternative approaches:
-
-| Approach | Use case | T>Map input | Append-back method |
-| --- | --- | --- | --- |
-| **Best-fit** | Treat each realization independently. | Every grid cell in each realization. | Exact cell-centre match. |
-| **Union** | Model all actual facies cells across the realization set. | One facies point set containing cells from every realization. | Exact lookup by realization and cell index. |
-| **Control** | Reduce the number of T>Map points while retaining the multi-realization facies envelope. | One shared facies envelope per XY column: shallowest/deepest occurrence across selected realizations plus regular vertical controls. | Interpolate the shared facies/XY control series back into every realization. |
-| **Uber** | Build a reusable regular facies lookup grid. | Regular XY/Z point sets by facies. | Vertical lookup/interpolation back to grid cells. |
-
-The approaches are alternatives; they are not stages that must be run one after another.
+The active profile is fixed when a project is created. Its suffix is part of the project name, for example `_siliciclastics`, `_carbonates`, or `_crystalline`.
 
 ## Repository layout
 
 ```text
-.
-├── dashboard/                         Streamlit dashboard and facies configuration
-│   ├── streamlit_app.py               Dashboard entry point
-│   └── facies_config.json             Facies labels and colours
-├── input/
-│   └── <project-name>/
-│       ├── source_grdecls/            Source GRDECL realizations
-│       └── facies_config.json         Project-specific facies definitions
-├── scripts/                           Reusable command-line workflow scripts
-├── reference_examples/                Compact external reference examples
-│   ├── michael_dfn_example/           Michael's DFN example GRDECL/config
-│   └── tmap_example/                  Example real T>Map point-set export
-├── outputs/<project-name>/            Generated point sets, augmented and DFN-prepared GRDECLs (not versioned)
-├── regenerate_synthetic_outputs.py    Rebuild all demonstration outputs locally
-├── run_dashboard.py                   Start the dashboard
-├── WORKFLOW.md                        Full command-by-command workflow guide
-└── requirements-dashboard.txt         Dashboard Python dependencies
+input/
+  <project>/
+    project_config.json
+    source_grdecls/
+      *.grdecl
+      facies_config.json             # Rock-type definitions in crystalline projects
+outputs/<project>/                   # generated locally; excluded from Git
+reference_examples/                  # compact T>Map and DFM reference files
+scripts/                             # reusable command-line tools and DFM executable
+dashboard/streamlit_app.py           # dashboard entry point
+run_dashboard.py                     # dashboard launcher
+WORKFLOW.md                          # detailed siliciclastic/MVP command guide
 ```
 
-`outputs/` is intentionally excluded from Git: it can be large and is regenerated from the source data. It remains on the local machine after being removed from Git's index.
+The repository includes four input projects so each profile is immediately visible in the dashboard:
 
-All generated 3D point-set filenames use the suffix `_3d_pointset`; this distinguishes the exported points from the source GRDECL grid.
+- `MVP_Gassum_mvp` (the five Gassum realizations for exercising multi-realization routes)
+- `Siliciclastics_Gassum_siliciclastics` (the Gassum Base model for the single-model T>Map route)
+- `Reef_Demo_carbonates`
+- `Crystalline_Pluton_Demo_crystalline`
 
-## Projects
+`outputs/` is intentionally not versioned. It can be large and is recreated locally from inputs or real returned modelling data.
 
-The dashboard starts with a **Project** control in the left sidebar. Select an existing project or enter a new name and choose **Create project**. A project keeps its input and output data separate:
+## Install and run
 
-```text
-input/<project-name>/source_grdecls/
-input/<project-name>/facies_config.json
-outputs/<project-name>/<approach>/
+[uv](https://docs.astral.sh/uv/getting-started/installation/) is the recommended dependency manager. It creates a project-local environment using the versions recorded in `uv.lock`.
+
+```powershell
+winget install --id=astral-sh.uv -e
+cd C:\GGS\go-forward
+uv sync
+uv run python run_dashboard.py
 ```
 
-The supplied SS-201 examples are in project `SS_201_Gassum_V0`. Copy new GRDECL files into the selected project's `source_grdecls` folder, then define its facies in Tab 1.
+Open the local URL printed by Streamlit, normally `http://localhost:8501`.
 
-To delete the currently selected project, use **Remove selected project** in the sidebar. Its confirmation dialog lets you either delete only `outputs/<project-name>` while keeping source inputs, or permanently delete both `input/<project-name>` and `outputs/<project-name>`.
+For a conventional Python environment instead:
 
-For a new project, Tab 1 accepts an external local source folder. Select **Enter another folder path**, use **Browse source folder in Windows Explorer**, then choose **Copy source GRDECLs into project**. This copies the `.grdecl` files and, where available, its `facies_config.json` into the active project's input folder.
-
-## Requirements
-
-- Python 3.10+ with `streamlit`, `pandas`, `numpy`, and `plotly` installed
-- Source GRDECL models with `SPECGRID`, `COORD`, `ZCORN`, and an integer facies property
-
-Install the dashboard dependencies if needed:
-
-```text
+```powershell
 python -m pip install -r requirements-dashboard.txt
-```
-
-## Quick start
-
-### 1. Start the dashboard
-
-```text
 python run_dashboard.py
 ```
 
-Open the local URL printed by Streamlit (normally `http://localhost:8501`).
+## Projects and data import
 
-### 2. Recreate all example outputs
+Create a project in the left sidebar by entering a base name and explicitly choosing a project type. The dashboard adds the workflow suffix and creates the matching input/output structure.
 
-The supplied launcher rebuilds the Best-fit, Union, Control, and Uber example outputs using synthetic T>Map-style properties:
+Use **Import source GRDECL file(s)** in the first workflow tab to select one or more `.grdecl` files. They are copied into the selected project's `source_grdecls` folder. The project list is derived from `input/`; externally renamed or removed input folders therefore disappear from the selector after a refresh.
 
-```text
-python regenerate_synthetic_outputs.py
+Define facies, carbonate facies, or rock types in the first tab. The same project configuration supplies names and discrete colours in the viewers. Only siliciclastic/MVP projects have the T>Map inclusion switch.
+
+## Siliciclastic/MVP data handoff
+
+1. Select source GRDECL models and a conversion approach.
+2. Build 3D point sets. Every current Best-fit point includes `CellIndex`; that is the preferred stable identity for return matching.
+3. Run the exported point sets in T>Map.
+4. Import returned point-set files in **FDM Append & View**, or copy them directly into the indicated `02_*` folder.
+5. Append returned properties to the corresponding GRDECL. Older or vertically sampled returns without full CellIndex coverage are interpolated vertically only where necessary.
+6. In **FFM Geomech preparation**, write DFM-ready GRDECL properties. In **FFM Run DFM**, create and launch a reproducible DFM run; inspect implicit and explicit results in **FFM View results**.
+
+Synthetic T>Map data is a demonstration/testing facility only. Do not overwrite real returned T>Map point sets with it.
+
+## Carbonates and crystalline rocks
+
+Carbonate projects currently provide a clear handoff path: inspect the FSM GRDECL, prepare a future finite-element mesh and CellIndex mapping, import GOLEM/PHREEQC results, then re-append them to the authoritative GRDECL. Until reactive-diagenesis results are available, **FFM Geomech preparation** can use porosity and mineral/cement properties exported directly from DionisosFlow.
+
+Crystalline projects skip the 3D-point and diagenesis stages. Define `RockType`, `ROCKTYPE`, `Lithology`, or another supported integer rock classification, assign geomechanical starting values by rock type, then prepare and run DFM.
+
+## Recreate synthetic siliciclastic example outputs
+
+The regeneration launcher applies only to the siliciclastic/MVP T>Map workflows. By default it rebuilds Best-fit, Union, Control, and Uber outputs for the supplied MVP multi-realization Gassum project:
+
+```powershell
+uv run python regenerate_synthetic_outputs.py
 ```
 
-To target another project:
+For a different project or one approach:
 
-```text
-python regenerate_synthetic_outputs.py --project "My_Project"
+```powershell
+uv run python regenerate_synthetic_outputs.py --project "My_Project_siliciclastics"
+uv run python regenerate_synthetic_outputs.py --approach Control
 ```
 
-To run only one workflow:
+It stops before DFM preparation because geomechanical formulas and property choices are project decisions made in the dashboard.
 
-```text
-python regenerate_synthetic_outputs.py --approach Control
-```
+## Further documentation
 
-### Regeneration defaults versus dashboard options
-
-`regenerate_synthetic_outputs.py` is a reproducible demonstration launcher, not a record of every selection available in the dashboard. It uses every GRDECL in the source folder, creates full-resolution Best-fit pointsets, and uses its `--control-vertical-spacing` and `--uber-vertical-spacing` parameters. The dashboard additionally supports selecting models, reduced/reservoir-only Best-fit exports, and interactive sampling previews. Add `--dry-run` to inspect the commands without writing files.
-
-Before regenerating the **Control** approach, clear or replace its three `outputs\Multi-realization control approach\0*` folders. The current Control workflow creates shared facies-envelope controls and honours enabled T>Map facies; old pointsets or returned synthetic files can otherwise remain in those folders. The launcher should be run with the current source `facies_config.json`; it is intentionally not a substitute for a real T>Map run. It recreates synthetic pointsets and augmented GRDECLs through the diagenesis review stage, but not Tab 4 DFN-prepared GRDECLs because those depend on chosen formulas, property inputs, and optional fallback settings.
-
-### 3. Run a new GRDECL data set
-
-Point the launcher to a new folder and provide the exact facies property keyword. The keyword is case-sensitive.
-
-```text
-python regenerate_synthetic_outputs.py --source-dir "C:\path\to\source-grdecls" --facies-property "FACIES"
-```
-
-For an actual T>Map project, use the individual build and append commands in [WORKFLOW.md](WORKFLOW.md): send the `01_*` point sets to T>Map, put the returned files in the matching `02_*_with_tmap_data` folder, then run that approach's append script. Do not run the synthetic generator over real returned T>Map files.
-
-Real T>Map return files do not need the synthetic filename suffix. The dashboard recognizes Petrel/T>Map point-set files from their `BEGIN HEADER` / `END HEADER` block and matches Best-fit returns to source pointsets by T>Map header provenance, filename, row count, or the single active source pointset. Returned property columns are imported dynamically: identity columns such as `X`, `Y`, `Z`, `Facies`, `CellIndex`, `Realization`, `ControlColumn`, and `point_id` are used for matching/provenance, while the other exported columns are appended to GRDECL.
-
-## Facies configuration
-
-Facies codes are discovered dynamically, so scripts support new integer codes without code changes. For each new DionisosFlow model, create a source-specific configuration by scanning its GRDECLs and entering the meaning of every observed integer:
-
-```text
-python scripts\initialize_facies_config.py --grdecl-dir "C:\path\to\source-grdecls" --property "FACIES"
-```
-
-This writes `facies_config.json` beside the source GRDECLs. Pass that file to multi-realization builders with `--facies-config`; `regenerate_synthetic_outputs.py` selects it automatically when present. The dashboard can import the same file through **Load facies color JSON**.
-
-The configuration records labels, colours, and hand-off metadata:
-
-```json
-{
-  "facies_colors": { "101": "#4e79a7" },
-  "facies_names": { "101": "Offshore" },
-  "facies_metadata": {
-    "101": { "category": "non_reservoir", "tmap_enabled": false }
-  }
-}
-```
-
-If a different model reuses an existing number with another geological meaning, use a separate source folder/configuration, or run the initializer with `--redefine --replace`. Unknown codes remain valid and are written with the label `facies_<code>` until they are defined.
-
-## Data and reproducibility
-
-Generated outputs and virtual environments are excluded through `.gitignore`. This keeps the repository practical to clone and avoids GitHub's large-file restrictions.
-
-Generated `outputs/` are deliberately not versioned. They can be recreated from the included example GRDECLs by running `regenerate_synthetic_outputs.py`, which produces synthetic sample T>Map data and the corresponding augmented GRDECLs. The compact `reference_examples/` folder keeps only Michael's DFN example GRDECL/config and the final `gassum_base_tmap.txt` real T>Map export used as a schema/example file. For a real project, replace the synthetic return files with the actual T>Map results. If source data are confidential or too large for GitHub, store them in the appropriate GEUS/OneDrive location and document their access path separately.
-
-## Fracture-modelling stages
-
-**Tab 4, Prepare DFN inputs**, reads an augmented GRDECL and writes an approach-specific DFN-prepared GRDECL folder. The output retains geometry, facies, and appended T>Map data, and adds `DFNPorosity`, `DFNEffectiveStress_MPa`, `YoungsModulus_Pa`, `PoissonsRatio`, `FrictionCoefficient`, `FractureEnergy_J_m2`, and `GEOMECHSOURCE`. It can also add `DIPAZIMUTH`: a locally smoothed top-horizon down-dip azimuth at each I/J column, in degrees clockwise from North. `GEOMECHSOURCE` identifies T>Map-derived values (`1`) and the optional depth-compaction fallback (`2`).
-
-**Tab 5, Run DFN Generator**, writes a GRDECL-capable `DFMGenerator_GRDECL.exe` configuration, optionally creates a structurally valid cropped GRDECL test grid, and launches the executable as a detached background process. Each run retains its copied/cropped input, configuration, manifest, status, log, and output files in the approach-specific next workflow folder: `05_DFN_generator_runs` for Best-fit, Union, and Control, and `06_DFN_generator_runs` for Uber. Property-only DFN-output GRDECLs are displayed against their run-input geometry in the Tab 5 viewer. Start with a cropped grid and a small timestep limit: explicit DFN generation can take substantially longer than the preceding GRDECL workflow.
-
-## More detail
-
-[WORKFLOW.md](WORKFLOW.md) contains the command-by-command workflow, including real T>Map hand-off rules, input requirements, facies setup, output folders, and Petrel/Eclipse-standard Uber output. The standard dashboard and regeneration routes use Python only and do not require a PowerShell execution-policy override.
+- [WORKFLOW.md](WORKFLOW.md) gives the command-by-command T>Map and DFM route for siliciclastic/MVP projects.
+- [dashboard/README.md](dashboard/README.md) explains the dashboard navigation and project profiles.
+- [dashboard/FACIES_CONFIG.md](dashboard/FACIES_CONFIG.md) explains project classification definitions and colours.
+- [reference_examples/README.md](reference_examples/README.md) describes the compact external reference files.

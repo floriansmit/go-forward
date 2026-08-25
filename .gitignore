@@ -2,6 +2,12 @@
 dashboard/.venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MkDocs build output
+site/
 
 # Local Streamlit secrets
 .streamlit/secrets.toml

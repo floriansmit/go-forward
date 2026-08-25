@@ -10,3 +10,28 @@ dependencies = [
     "plotly>=6.9.0",
     "streamlit>=1.62.0",
 ]
+
+[project.optional-dependencies]
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.25.0",
+    "pymdown-extensions>=10.8.0",
+]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+    "scipy>=1.13.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "scripts"]
+addopts = "-ra -q"
+
+[dependency-groups]
+dev = [
+    "playwright>=1.62.0",
+]
+

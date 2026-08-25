@@ -29,9 +29,9 @@ except ModuleNotFoundError:  # pragma: no cover - handled inside UI
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
-INPUT_ROOT = ROOT / "input"
-OUTPUT_ROOT = ROOT / "outputs"
-DEFAULT_PROJECT_NAME = "SS_201_Gassum_V0"
+DATA_ROOT = ROOT / "data"
+ORIGINAL_GRDECL_FOLDER = "0_original_grdecl"
+DEFAULT_PROJECT_NAME = "MVP_Gassum_mvp"
 WORKFLOW_PROFILES = {
     "MVP": {
         "suffix": "mvp",
@@ -90,9 +90,9 @@ def approaches_for_project(
         root = project_output_dir / "Crystalline rock workflow"
         return {
             "Crystalline rock model": {
-                "point_dir": source_grdecl_dir or root / "00_source_grdecls",
-                "tmap_dir": source_grdecl_dir or root / "00_source_grdecls",
-                "augmented_dir": source_grdecl_dir or root / "00_source_grdecls",
+                "point_dir": source_grdecl_dir or root / ORIGINAL_GRDECL_FOLDER,
+                "tmap_dir": source_grdecl_dir or root / ORIGINAL_GRDECL_FOLDER,
+                "augmented_dir": source_grdecl_dir or root / ORIGINAL_GRDECL_FOLDER,
                 "dfn_dir": root / "01_DFM_prepared_grdecls",
                 "dfn_run_dir": root / "02_DFM_generator_runs",
                 "build_points": [],
@@ -1544,7 +1544,7 @@ def valid_project_name(name: str) -> bool:
 
 
 def project_config_path(name: str) -> Path:
-    return INPUT_ROOT / name / "project_config.json"
+    return DATA_ROOT / name / "project_config.json"
 
 
 def workflow_profile_from_project_name(name: str) -> str | None:
@@ -1601,17 +1601,11 @@ def set_profile_for_selected_project() -> None:
 
 
 def project_names() -> list[str]:
-    """Return projects registered by their input folder.
-
-    Input is authoritative because renaming a project input folder is the
-    normal way to standardise a project name.  Old output-only folders may be
-    retained temporarily for backup, but must not leave a broken project entry
-    in the dashboard selector.
-    """
-    if not INPUT_ROOT.exists():
+    """Return projects registered by their single project-data folder."""
+    if not DATA_ROOT.exists():
         return []
     return sorted(
-        (path.name for path in INPUT_ROOT.iterdir() if path.is_dir()),
+        (path.name for path in DATA_ROOT.iterdir() if path.is_dir()),
         key=str.lower,
     )
 
@@ -1622,8 +1616,7 @@ def create_project(name: str, profile: str) -> None:
         st.session_state["project_create_error"] = "Use letters, numbers, hyphens, and underscores only; begin with a letter or number."
         return
     clean = project_name_for_profile(base_name, profile)
-    (INPUT_ROOT / clean / "source_grdecls").mkdir(parents=True, exist_ok=True)
-    (OUTPUT_ROOT / clean).mkdir(parents=True, exist_ok=True)
+    (DATA_ROOT / clean / ORIGINAL_GRDECL_FOLDER).mkdir(parents=True, exist_ok=True)
     write_project_workflow_profile(clean, profile)
     st.session_state["project_selector"] = clean
     st.session_state["project_workflow_selector"] = profile
@@ -1654,20 +1647,24 @@ def remove_folder_with_retries(target: Path, attempts: int = 4) -> str | None:
 
 
 def remove_project(name: str, remove_input: bool) -> None:
-    """Delete output only, or both project input and output, after modal confirmation."""
+    """Delete generated data only, or an entire project-data folder."""
     clean = name.strip()
     if not valid_project_name(clean):
         st.session_state["project_remove_result"] = ("error", "Unsafe project name was rejected.")
         return
-    targets = [OUTPUT_ROOT / clean]
+    project_dir = DATA_ROOT / clean
     if remove_input:
-        targets.insert(0, INPUT_ROOT / clean)
+        targets = [project_dir]
+    else:
+        targets = [path for path in project_dir.iterdir() if path.is_dir() and path.name != ORIGINAL_GRDECL_FOLDER] if project_dir.exists() else []
     removed = []
     failures = []
     for target in targets:
-        # The name validation plus this parent check prevents deletion outside
-        # the two project roots even if this callback is reused later.
-        if target.parent not in {INPUT_ROOT, OUTPUT_ROOT}:
+        # The name validation plus this containment check prevents deletion
+        # outside the single project-data root.
+        resolved_target = target.resolve()
+        resolved_project = project_dir.resolve()
+        if resolved_target != resolved_project and not str(resolved_target).lower().startswith(str(resolved_project).lower() + "\\"):
             st.session_state["project_remove_result"] = ("error", "Unsafe project path was rejected.")
             return
         if target.exists():
@@ -1691,13 +1688,14 @@ def remove_project(name: str, remove_input: bool) -> None:
         )
     else:
         level = "success"
-        message = f"Removed " + ("input and output" if remove_input else "output") + f" for project {clean}: " + (", ".join(removed) if removed else "no matching project folders existed.")
+        message = f"Removed " + ("all project data" if remove_input else "generated workflow data") + f" for project {clean}: " + (", ".join(removed) if removed else "no matching project folders existed.")
     st.session_state["project_remove_result"] = (level, message)
 
 
 def clear_missing_workspace_file_state() -> None:
     """Remove stale file-selector values after external folder renames."""
-    workspace_roots = (INPUT_ROOT.resolve(), OUTPUT_ROOT.resolve())
+    legacy_roots = tuple(root.resolve() for root in (ROOT / "input", ROOT / "outputs") if root.exists())
+    workspace_roots = (DATA_ROOT.resolve(), *legacy_roots)
     for key, value in list(st.session_state.items()):
         if not isinstance(value, (str, Path)):
             continue
@@ -1717,18 +1715,18 @@ def remove_project_dialog(project_name: str) -> None:
     st.write(f"Project: `{project_name}`")
     scope = st.radio(
         "What should be deleted?",
-        ["Output only", "Input and output"],
-        help="Output only keeps the source GRDECLs and facies configuration. Input and output permanently removes both corresponding project folders.",
+        ["Generated workflow data", "Entire project data"],
+        help="Generated workflow data keeps 0_original_grdecl and its facies configuration. Entire project data permanently removes the complete project folder.",
     )
-    if scope == "Output only":
-        st.info("Deletes only outputs/<project>. Source GRDECLs and facies definitions are retained.")
+    if scope == "Generated workflow data":
+        st.info("Deletes generated workflow folders but retains 0_original_grdecl and its facies definitions.")
     else:
-        st.warning("Permanently deletes both input/<project> and outputs/<project>, including source GRDECLs and facies definitions.")
+        st.warning("Permanently deletes the complete project data folder, including 0_original_grdecl and facies definitions.")
     cancel, remove = st.columns(2)
     if cancel.button("Cancel"):
         st.rerun()
     if remove.button("Delete selected scope", type="primary"):
-        remove_project(project_name, remove_input=scope == "Input and output")
+        remove_project(project_name, remove_input=scope == "Entire project data")
         st.rerun()
 
 
@@ -1740,7 +1738,7 @@ def copy_source_grdecls_into_project(
     selector_key: str = "source_grdecl_folder_choice",
     selector_value: str | None = None,
 ) -> None:
-    """Copy an external GRDECL source set into the active project's input folder."""
+    """Copy an external GRDECL source set into a project's starting-data folder."""
     source_dir = Path(source_text).expanduser()
     destination_dir = Path(destination_text)
     try:
@@ -3634,7 +3632,7 @@ def render_profile_grdecl_inspection(profile: str) -> None:
             source_grdecl_file_import_controls(f"{profile.lower().replace(' ', '_')}_source_import")
         grdecl = file_selector("Source GRDECL", source_dir, ("*.grdecl", "*.GRDECL"), f"{profile}_inspection_grdecl")
         if not grdecl:
-            st.info("Add a GRDECL to this project's source_grdecls folder to inspect it here.")
+            st.info("Add a GRDECL to this project's 0_original_grdecl folder to inspect it here.")
         else:
             dims = grdecl_dimensions(str(grdecl))
             first, second = st.columns(2)
@@ -3780,8 +3778,8 @@ with st.sidebar:
         st.error(error)
     if created := st.session_state.pop("project_created", None):
         st.success(f"Created and selected project: {created}")
-    st.caption(f"Input: {display_path(INPUT_ROOT / active_project / 'source_grdecls')}")
-    st.caption(f"Output: {display_path(OUTPUT_ROOT / active_project)}")
+    st.caption(f"Project data: {display_path(DATA_ROOT / active_project)}")
+    st.caption(f"Starting GRDECLs: {display_path(DATA_ROOT / active_project / ORIGINAL_GRDECL_FOLDER)}")
     st.divider()
     st.header("Display")
     max_rows = st.slider("Maximum plotted rows", 5_000, 200_000, 75_000, step=5_000)
@@ -3790,10 +3788,9 @@ with st.sidebar:
         st.warning("Plotly is not installed; visual plots will be replaced by tables.")
 
 ACTIVE_PROJECT_NAME = active_project
-ACTIVE_PROJECT_INPUT_DIR = INPUT_ROOT / ACTIVE_PROJECT_NAME
-ACTIVE_SOURCE_GRDECL_DIR = ACTIVE_PROJECT_INPUT_DIR / "source_grdecls"
-ACTIVE_PROJECT_OUTPUT_DIR = OUTPUT_ROOT / ACTIVE_PROJECT_NAME
-ACTIVE_APPROACHES = approaches_for_project(ACTIVE_PROJECT_OUTPUT_DIR, active_profile, ACTIVE_SOURCE_GRDECL_DIR)
+ACTIVE_PROJECT_DATA_DIR = DATA_ROOT / ACTIVE_PROJECT_NAME
+ACTIVE_SOURCE_GRDECL_DIR = ACTIVE_PROJECT_DATA_DIR / ORIGINAL_GRDECL_FOLDER
+ACTIVE_APPROACHES = approaches_for_project(ACTIVE_PROJECT_DATA_DIR, active_profile, ACTIVE_SOURCE_GRDECL_DIR)
 
 workflow_tabs, inspection_tab, workflow_placeholder_tab = build_workflow_tabs(active_profile)
 tab1, tab2, tab3, tab4, tab5, tab6 = workflow_tabs
@@ -4566,7 +4563,7 @@ with tab5:
                     st.session_state["tab5_allow_cropped_intermediates"] = True
                     st.success("Michael's numerical reference settings are loaded. Local GRDECL property mappings were retained where the reference uses placeholders, including the 1,000-timestep growth limit.")
                     st.rerun()
-            estimate_run_root = OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs" if demo_mode else Path(dfn_approach["dfn_run_dir"])
+            estimate_run_root = ACTIVE_PROJECT_DATA_DIR / "DFN demo runs" if demo_mode else Path(dfn_approach["dfn_run_dir"])
             crop_run, crop_i, crop_j, crop_k, crop_cells = dfn_crop_controls(dims, str(selected_input), str(estimate_run_root))
 
             settings_form = st.form("tab5_dfn_settings_form", border=False)
@@ -4689,7 +4686,7 @@ with tab5:
             st.caption("Settings remain pending while you edit, without reloading the dashboard. Generate configuration and run DFN submits and saves the current settings in one step. Runs are detached so Streamlit stays responsive.")
             if launch_dfn:
                 run_root = (
-                    OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs"
+                    ACTIVE_PROJECT_DATA_DIR / "DFN demo runs"
                     if demo_mode else Path(dfn_approach["dfn_run_dir"])
                 )
                 run_settings = dict(settings)
@@ -4760,7 +4757,7 @@ with tab5:
                 st.success("The supplied demo run is available. Open Tab 6 to inspect its output GRDECL and properties.")
         else:
             run_root = (
-                OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs"
+                ACTIVE_PROJECT_DATA_DIR / "DFN demo runs"
                 if demo_mode else Path(dfn_approach["dfn_run_dir"])
             )
             run_dirs = sorted([path for path in run_root.iterdir() if path.is_dir()], reverse=True) if run_root.exists() else []
@@ -4810,7 +4807,7 @@ with tab6:
     )
     if result_source == "Dashboard-generated Michael demo run":
         review_approach_name = "Dashboard-generated Michael demo"
-        run_root = OUTPUT_ROOT / ACTIVE_PROJECT_NAME / "DFN demo runs"
+        run_root = ACTIVE_PROJECT_DATA_DIR / "DFN demo runs"
         result_key_prefix = "tab6_dashboard_demo"
     else:
         review_approach_name, review_approach = approach_selector("tab6_approach")

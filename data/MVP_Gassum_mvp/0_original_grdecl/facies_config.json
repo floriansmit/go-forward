@@ -1,6 +1,6 @@
 {
   "facies_property": "Facies",
-  "source_grdecl_directory": "input/MVP_Gassum_mvp/source_grdecls",
+  "source_grdecl_directory": "data/MVP_Gassum_mvp/0_original_grdecl",
   "source_grdecl_files": [
     "gassum_base.grdecl",
     "gassum_maxsubs.grdecl",

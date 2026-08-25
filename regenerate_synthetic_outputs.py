@@ -50,7 +50,7 @@ def selected(args: argparse.Namespace, approach: str) -> bool:
 
 def main() -> int:
     args = parse_args()
-    source_dir = args.source_dir or ROOT / "input" / args.project / "source_grdecls"
+    source_dir = args.source_dir or ROOT / "data" / args.project / "0_original_grdecl"
     source_dir = source_dir.resolve()
     facies_config = args.facies_config or source_dir / "facies_config.json"
     if not facies_config.exists():
@@ -63,7 +63,7 @@ def main() -> int:
     if not list(source_dir.glob("*.grdecl")):
         raise FileNotFoundError(f"No .grdecl files were found in: {source_dir}")
 
-    outputs = ROOT / "outputs" / args.project
+    outputs = ROOT / "data" / args.project
     facies_property = args.facies_property
 
     if selected(args, "BestFit"):

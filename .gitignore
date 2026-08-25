@@ -6,8 +6,15 @@ __pycache__/
 # Local Streamlit secrets
 .streamlit/secrets.toml
 
-# Local output folders
+# Deprecated split data roots and generated project workflow folders
+input/
 outputs/
+# Keep only the versioned project metadata and starting GRDECL data. Every
+# other direct project child is generated workflow data and stays local.
+data/*/*
+!data/*/project_config.json
+!data/*/0_original_grdecl/
+!data/*/0_original_grdecl/**
 
 # venv and claude
 .venv/

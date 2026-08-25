@@ -9,9 +9,9 @@ from grdecl_utils import grdecl_cell_centers, grdecl_keyword, path_for_io, token
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
-DEFAULT_POINTSET_DIR = ROOT / "outputs" / "Multi-realization control approach" / "02_control_pointsets_with_tmap_data"
-DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization control approach" / "03_augmented_grdecls_from_control_interpolation"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_POINTSET_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization control approach" / "02_control_pointsets_with_tmap_data"
+DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization control approach" / "03_augmented_grdecls_from_control_interpolation"
 NO_VALUE = "-77777"
 IDENTITY_COLUMNS = {"x", "y", "z", "facies", "realization", "cellindex", "point_id", "pointid", "controlcolumn"}
 

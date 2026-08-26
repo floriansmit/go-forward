@@ -1,14 +1,16 @@
 # Project Profiles & Architecture
 
-GO-Forward organizes input models and output artifacts by project. Each project directory under `input/<project-name>/` contains a `project_config.json` defining its geological profile.
+GO-Forward organizes input models and output artifacts by project. Each project directory under `data/<project-name>/` contains a `project_config.json` defining its geological profile.
 
 ```text
-input/
-├── <project-name>/
-│   ├── project_config.json            # Profile selection & metadata
-│   ├── source_grdecls/                # Input GRDECL realization files
-│   └── facies_config.json             # Facies/Rock-type labels and colors
+data/
+└── <project-name>/
+    ├── project_config.json            # Profile selection & metadata
+    └── 0_original_grdecl/             # Input GRDECL realization files
+        ├── *.grdecl
+        └── facies_config.json         # Facies/Rock-type labels and colors
 ```
+
 
 ---
 

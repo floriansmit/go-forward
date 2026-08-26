@@ -9,8 +9,8 @@ from grdecl_utils import grdecl_cell_centers, path_for_io, tokenize_grdecl
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
-DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Best-fit approach" / "01_3d_points_from_original_grdecls"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Best-fit approach" / "01_3d_points_from_original_grdecls"
 
 
 def grdecl_property_values(path: Path, keyword: str) -> list[str]:

@@ -16,7 +16,7 @@ from grdecl_utils import grdecl_cell_centers, path_for_io
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Multi-realization Uber approach" / "04_petrel_standard_grdecls_from_uber_lookup"
+DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization Uber approach" / "04_petrel_standard_grdecls_from_uber_lookup"
 PETREL_PROPERTY_COLUMNS = (
     ("total_porosity_mean", "PORO", "total_porosity_mean"),
     ("total_porosity_stdev", "POROSTD", "total_porosity_stdev"),

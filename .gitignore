@@ -14,6 +14,12 @@ site/
 
 # Local output folders
 outputs/
+# Keep only the versioned project metadata and starting GRDECL data. Every
+# other direct project child is generated workflow data and stays local.
+data/*/*
+!data/*/project_config.json
+!data/*/0_original_grdecl/
+!data/*/0_original_grdecl/**
 
 # venv and claude
 .venv/

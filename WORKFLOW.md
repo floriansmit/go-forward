@@ -4,11 +4,16 @@ This guide describes the current command-line and dashboard routes. The dashboar
 
 ## 1. Start from a project
 
-Projects keep their own source data and outputs:
+Projects keep their original GRDECLs and all generated workflow data together:
 
 ```text
-input/<project>/source_grdecls/
-outputs/<project>/
+data/<project>/
+  0_original_grdecl/
+    *.grdecl
+    facies_config.json
+  Best-fit approach/
+  Multi-realization control approach/
+  ...
 ```
 
 Create a project in the dashboard sidebar, select its rock-workflow profile, and import one or more source GRDECL files in the first tab. The four included examples are:
@@ -44,14 +49,14 @@ Only MVP and siliciclastic projects have a T>Map switch. Enable it only for clas
 The definitions are saved at:
 
 ```text
-input/<project>/source_grdecls/facies_config.json
+data/<project>/0_original_grdecl/facies_config.json
 ```
 
 For a scripted initialisation of a new siliciclastic source set:
 
 ```powershell
 $Project = "My_Project_siliciclastics"
-$SourceDir = ".\input\$Project\source_grdecls"
+$SourceDir = ".\data\$Project\0_original_grdecl"
 uv run python .\scripts\initialize_facies_config.py --grdecl-dir $SourceDir --property "Facies"
 ```
 
@@ -77,8 +82,8 @@ If an older return is vertically sampled rather than full resolution, the append
 
 ```powershell
 $Project = "Siliciclastics_Gassum_siliciclastics"
-$SourceDir = ".\input\$Project\source_grdecls"
-$Out = ".\outputs\$Project\Best-fit approach"
+$SourceDir = ".\data\$Project\0_original_grdecl"
+$Out = ".\data\$Project\Best-fit approach"
 
 uv run python .\scripts\build_best_fit_grdecl_to_pointset.py `
   --grdecl-dir $SourceDir `
@@ -101,9 +106,9 @@ All selected source models must have compatible grid dimensions and cell orderin
 
 ```powershell
 $Project = "MVP_Gassum_mvp"
-$SourceDir = ".\input\$Project\source_grdecls"
+$SourceDir = ".\data\$Project\0_original_grdecl"
 $Config = "$SourceDir\facies_config.json"
-$Out = ".\outputs\$Project"
+$Out = ".\data\$Project"
 
 # 1. Union: one point-set family per facies across selected realizations.
 uv run python .\scripts\build_multi_realizations_grdecls_to_union_pointsets.py `
@@ -190,7 +195,7 @@ Use **FFM Run DFM** to create a separate run folder under the current approachâ€
 
 ## 8. Important conventions
 
-- Keep `outputs/` local. It is excluded from Git because it can be large and is reproducible from source data or real returned files.
+- Keep generated workflow folders under `data/<project>/` local. They are excluded from Git because they can be large and are reproducible from original GRDECLs or real returned files.
 - Preserve GRDECL geometry and cell ordering when appending properties. Do not use a returned point set from a different source model.
 - `-77777` is the no-value marker. For T>Map properties, it normally means that a class was excluded from T>Map or no return value could be assigned.
 - Keep `MAPAXES`, `COORD`, `ZCORN`, `SPECGRID`, and original geometry keywords when supplying a GRDECL to DFM Generator.

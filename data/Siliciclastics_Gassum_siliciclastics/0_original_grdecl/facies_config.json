@@ -1,6 +1,6 @@
 {
   "facies_property": "Facies",
-  "source_grdecl_directory": "input/Siliciclastics_Gassum_siliciclastics/source_grdecls",
+  "source_grdecl_directory": "data/Siliciclastics_Gassum_siliciclastics/0_original_grdecl",
   "source_grdecl_files": [
     "gassum_base.grdecl"
   ],

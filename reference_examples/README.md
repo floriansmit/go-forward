@@ -6,4 +6,4 @@ This folder keeps only the compact external reference files used by the MVP work
 - `michael_dfn_example/FaultedGridGeometryPropertyTest.GRDECL` is Michael's DFN example GRDECL.
 - `michael_dfn_example/FaultedGridGeometryPropertyTest.txt` is Michael's DFN example configuration.
 
-Historical raw exports and intermediate experiments should live under `input/` and `outputs/`, not in this reference folder.
+Historical raw exports and intermediate experiments should live in the relevant `data/<project>/` folder, not in this reference folder.

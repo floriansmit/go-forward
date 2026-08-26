@@ -10,9 +10,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "input" / "source_grdecls_from_dionisosflow"
-DEFAULT_POINTSET_DIR = ROOT / "outputs" / "Best-fit approach" / "02_3d_points_with_tmap_data"
-DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "Best-fit approach" / "03_augmented_grdecls_with_tmap_data"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_POINTSET_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Best-fit approach" / "02_3d_points_with_tmap_data"
+DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Best-fit approach" / "03_augmented_grdecls_with_tmap_data"
 NO_VALUE = "-77777"
 MATCH_TOLERANCE_M = 0.05
 IDENTITY_COLUMNS = {"x", "y", "z", "facies", "cellindex", "point_id", "pointid", "realization", "controlcolumn"}

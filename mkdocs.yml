@@ -1,0 +1,75 @@
+site_name: GO-Forward Workflow Documentation
+site_description: Integrated Stratigraphic Forward Modelling, Diagenesis, and DFM Workflow
+site_author: Geoscience Research Team
+repo_url: https://github.com/floriansmit/go-forward
+repo_name: floriansmit/go-forward
+
+theme:
+  name: material
+  logo: assets/logos/GO-Forward-gros_transparent.png
+  favicon: assets/logos/GO-Forward-gros_transparent.png
+  palette:
+    - scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [scripts]
+          options:
+            show_root_heading: true
+            show_source: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quickstart & Installation: getting_started/quickstart.md
+      - Project Profiles: getting_started/profiles.md
+  - Workflows & Technical Analyses:
+      - Siliciclastics Workflow: workflows/siliciclastics.md
+      - Carbonates Workflow: workflows/carbonates.md
+      - Crystalline Rocks Workflow: workflows/crystalline.md
+  - Developer & Reference:
+      - Scripts Reference: api/scripts_reference.md
+      - Testing & Verification: developer/testing.md

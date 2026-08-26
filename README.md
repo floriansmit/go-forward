@@ -1,6 +1,14 @@
+<p align="center">
+  <img src="docs/assets/logos/GO-Forward-gros_transparent.png" alt="GO-Forward: Optimizing Geothermal Exploration" width="500">
+</p>
+<p align="center">
+  <img src="docs/assets/logos/EU-Logo.png" alt="Funded by the European Union" width="220">
+</p>
+
 # GO-Forward integrated forward modelling workflow
 
 GO-Forward is a local Streamlit dashboard and a set of reproducible Python tools for preparing corner-point GRDECL models for diagenetic and dynamic fracture modelling (DFM). It supports several geological workflow profiles from one project-level interface.
+
 
 ## Workflow profiles
 
@@ -16,18 +24,23 @@ The active profile is fixed when a project is created. Its suffix is part of the
 ## Repository layout
 
 ```text
-data/
-  <project>/
-    project_config.json
-    0_original_grdecl/
-      *.grdecl
-      facies_config.json             # Rock-type definitions in crystalline projects
-    <numbered workflow folders>/     # generated locally; excluded from Git
-reference_examples/                  # compact T>Map and DFM reference files
-scripts/                             # reusable command-line tools and DFM executable
-dashboard/streamlit_app.py           # dashboard entry point
-run_dashboard.py                     # dashboard launcher
-WORKFLOW.md                          # detailed siliciclastic/MVP command guide
+.
+├── docs/                              # MkDocs documentation source files
+├── mkdocs.yml                         # MkDocs Material configuration
+├── tests/                             # Pytest automated test suite
+├── pyproject.toml                     # Project metadata and dependencies (uv)
+├── data/
+│   └── <project>/
+│       ├── project_config.json        # Active profile configuration
+│       ├── 0_original_grdecl/         # Authoritative source GRDECL models
+│       │   ├── *.grdecl
+│       │   └── facies_config.json     # Facies/Rock-type definitions and colours
+│       └── <numbered workflow folders>/  # Generated locally; excluded from Git
+├── reference_examples/                # Compact T>Map and DFM reference files
+├── scripts/                           # Reusable command-line tools and DFM executable
+├── dashboard/streamlit_app.py         # Dashboard entry point
+├── run_dashboard.py                   # Dashboard launcher
+└── WORKFLOW.md                        # Detailed siliciclastic/MVP command guide
 ```
 
 The repository includes four input projects so each profile is immediately visible in the dashboard:
@@ -46,7 +59,7 @@ Only `data/<project>/0_original_grdecl/` is versioned. Generated project workflo
 ```powershell
 winget install --id=astral-sh.uv -e
 cd C:\GGS\go-forward
-uv sync
+uv sync --all-extras
 uv run python run_dashboard.py
 ```
 
@@ -55,8 +68,46 @@ Open the local URL printed by Streamlit, normally `http://localhost:8501`.
 For a conventional Python environment instead:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dashboard.txt
 python run_dashboard.py
+```
+
+## Testing
+
+GO-Forward includes an automated `pytest` suite in `tests/` covering background numerical transformations, corner-point geometry calculations, geomechanical formulas, and file I/O operations without depending on the UI.
+
+Run the test suite with `uv`:
+
+```powershell
+uv run python -m pytest
+```
+
+To run with coverage reporting:
+
+```powershell
+uv run python -m pytest --cov=scripts
+```
+
+For more details on writing and running tests, see [docs/developer/testing.md](docs/developer/testing.md).
+
+## Documentation
+
+Full project documentation is built with [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) and includes technical workflow descriptions, mathematical formulations, and CLI references.
+
+To preview documentation locally with live-reload:
+
+```powershell
+uv run python -m mkdocs serve
+```
+
+Open `http://localhost:8000` in your browser.
+
+To build the static HTML documentation:
+
+```powershell
+uv run python -m mkdocs build --strict
 ```
 
 ## Projects and data import
@@ -104,6 +155,7 @@ It stops before DFM preparation because geomechanical formulas and property choi
 ## Further documentation
 
 - [WORKFLOW.md](WORKFLOW.md) gives the command-by-command T>Map and DFM route for siliciclastic/MVP projects.
+- [docs/](docs/) contains the complete MkDocs documentation sources.
 - [dashboard/README.md](dashboard/README.md) explains the dashboard navigation and project profiles.
 - [dashboard/FACIES_CONFIG.md](dashboard/FACIES_CONFIG.md) explains project classification definitions and colours.
 - [reference_examples/README.md](reference_examples/README.md) describes the compact external reference files.

@@ -2,12 +2,17 @@
 dashboard/.venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MkDocs build output
+site/
 
 # Local Streamlit secrets
 .streamlit/secrets.toml
 
-# Deprecated split data roots and generated project workflow folders
-input/
+# Local output folders
 outputs/
 # Keep only the versioned project metadata and starting GRDECL data. Every
 # other direct project child is generated workflow data and stays local.

@@ -24,18 +24,23 @@ The active profile is fixed when a project is created. Its suffix is part of the
 ## Repository layout
 
 ```text
-data/
-  <project>/
-    project_config.json
-    0_original_grdecl/
-      *.grdecl
-      facies_config.json             # Rock-type definitions in crystalline projects
-    <numbered workflow folders>/     # generated locally; excluded from Git
-reference_examples/                  # compact T>Map and DFM reference files
-scripts/                             # reusable command-line tools and DFM executable
-dashboard/streamlit_app.py           # dashboard entry point
-run_dashboard.py                     # dashboard launcher
-WORKFLOW.md                          # detailed siliciclastic/MVP command guide
+.
+├── docs/                              # MkDocs documentation source files
+├── mkdocs.yml                         # MkDocs Material configuration
+├── tests/                             # Pytest automated test suite
+├── pyproject.toml                     # Project metadata and dependencies (uv)
+├── data/
+│   └── <project>/
+│       ├── project_config.json        # Active profile configuration
+│       ├── 0_original_grdecl/         # Authoritative source GRDECL models
+│       │   ├── *.grdecl
+│       │   └── facies_config.json     # Facies/Rock-type definitions and colours
+│       └── <numbered workflow folders>/  # Generated locally; excluded from Git
+├── reference_examples/                # Compact T>Map and DFM reference files
+├── scripts/                           # Reusable command-line tools and DFM executable
+├── dashboard/streamlit_app.py         # Dashboard entry point
+├── run_dashboard.py                   # Dashboard launcher
+└── WORKFLOW.md                        # Detailed siliciclastic/MVP command guide
 ```
 
 The repository includes four input projects so each profile is immediately visible in the dashboard:

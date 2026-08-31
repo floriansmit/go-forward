@@ -379,7 +379,7 @@ def write_facies_readme(output_dir: Path, facies_counts: Counter[int]) -> None:
     lines = [
         "# Facies codes",
         "",
-        "Source: `facies_codes.png` in the workspace root, read after the corrected facies-code update.",
+        "Source: project `facies_config.json` definitions and synthetic MVP defaults.",
         "",
         "| Code | Name | Percent in source point sets | N in source point sets | Synthetic property tendency |",
         "| ---: | --- | ---: | ---: | --- |",

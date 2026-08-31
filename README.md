@@ -159,3 +159,7 @@ It stops before DFM preparation because geomechanical formulas and property choi
 - [dashboard/README.md](dashboard/README.md) explains the dashboard navigation and project profiles.
 - [dashboard/FACIES_CONFIG.md](dashboard/FACIES_CONFIG.md) explains project classification definitions and colours.
 - [reference_examples/README.md](reference_examples/README.md) describes the compact external reference files.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

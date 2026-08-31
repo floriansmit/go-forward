@@ -3722,7 +3722,7 @@ st.title("GO-Forward: Integrated Forward Modelling Workflow")
 st.caption("Prepare geological models for diagenesis, review returned properties, and create DFN-ready fracture-modelling inputs.")
 
 with st.sidebar:
-    st.image(ROOT / "GO-Forward-gros_transparent.png", width="stretch")
+    st.image(ROOT / "docs" / "assets" / "logos" / "GO-Forward-gros_transparent.png", width="stretch")
     st.header("Project")
     clear_missing_workspace_file_state()
     existing_projects = project_names()

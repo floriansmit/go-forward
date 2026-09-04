@@ -37,7 +37,8 @@ The active profile is fixed when a project is created. Its suffix is part of the
 │       │   └── facies_config.json     # Facies/Rock-type definitions and colours
 │       └── <numbered workflow folders>/  # Generated locally; excluded from Git
 ├── reference_examples/                # Compact T>Map and DFM reference files
-├── scripts/                           # Reusable command-line tools and DFM executable
+├── scripts/                           # Reusable GO-Forward command-line tools
+├── external-tools/DFMGenerator/       # Temporary Apache-2.0 DFM Generator distribution
 ├── dashboard/streamlit_app.py         # Dashboard entry point
 ├── run_dashboard.py                   # Dashboard launcher
 └── WORKFLOW.md                        # Detailed siliciclastic/MVP command guide
@@ -137,6 +138,12 @@ Carbonate projects currently provide a clear handoff path: inspect the FSM GRDEC
 
 Crystalline projects skip the 3D-point and diagenesis stages. Define `RockType`, `ROCKTYPE`, `Lithology`, or another supported integer rock classification, assign geomechanical starting values by rock type, then prepare and run DFM.
 
+## DFM Generator licence and distribution
+
+GO-Forward is MIT licensed. The bundled `external-tools/DFMGenerator/DFMGenerator_GRDECL.exe` is a separately developed component by Michael J. Welch and contributors, licensed under Apache License 2.0. It is included temporarily so the demonstrator can run while the official upstream distribution is being prepared at [JointFlow/DFMGenerator](https://github.com/JointFlow/DFMGenerator). It is not GO-Forward dashboard code.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `external-tools/DFMGenerator/LICENSE-Apache-2.0.txt`. The dashboard invokes the executable as a separate process and lets users select a newer official executable when available.
+
 ## Recreate synthetic siliciclastic example outputs
 
 The regeneration launcher applies only to the siliciclastic/MVP T>Map workflows. By default it rebuilds Best-fit, Union, Control, and Uber outputs for the supplied MVP multi-realization Gassum project:
@@ -164,4 +171,4 @@ It stops before DFM preparation because geomechanical formulas and property choi
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+GO-Forward dashboard code and documentation are licensed under the [MIT License](LICENSE). The temporarily bundled DFM Generator executable is a separate Apache-2.0 component; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

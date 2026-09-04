@@ -191,7 +191,7 @@ In **FFM Geomech preparation**, choose the augmented or direct source GRDECL and
 
 Use **FFM Run DFM** to create a separate run folder under the current approach’s `05_DFM_generator_runs` directory. It copies the input grid, writes the configuration and manifest, records a log and status, and preserves generated output. Start with a cropped run and implicit output before requesting an expensive explicit fracture calculation.
 
-`DFMGenerator_GRDECL.exe` is distributed in `scripts/` for the Windows dashboard workflow. Its configuration controls model behaviour; consult the executable reference examples and the DFM settings panel before changing stress or timestep parameters.
+`external-tools/DFMGenerator/DFMGenerator_GRDECL.exe` is a separately developed Apache-2.0 component, temporarily included for the Windows demonstrator while its official upstream distribution is prepared at [JointFlow/DFMGenerator](https://github.com/JointFlow/DFMGenerator). It is not GO-Forward code. Its configuration controls model behaviour; consult the executable reference examples and the DFM settings panel before changing stress or timestep parameters.
 
 ## 8. Important conventions
 

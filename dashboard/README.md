@@ -39,3 +39,5 @@ MVP and siliciclastic profiles build 3D point sets with stable `CellIndex` ident
 **FFM Geomech preparation** writes the GRDECL properties required by the DFM executable, including `DFNPorosity`, `DFNEffectiveStress_MPa`, `YoungsModulus_Pa`, `PoissonsRatio`, `FrictionCoefficient`, `FractureEnergy_J_m2`, and optionally `DIPAZIMUTH`.
 
 **FFM Run DFM** writes a reproducible run folder with copied input grid, configuration, manifest, status, log, and output. Use cropped runs first. Explicit fracture generation can take substantially longer than implicit-property calculations.
+
+The dashboard invokes DFM Generator as a separate external executable. The current Apache-2.0 binary is temporarily bundled in `external-tools/DFMGenerator/` pending the official upstream release at [JointFlow/DFMGenerator](https://github.com/JointFlow/DFMGenerator). See `THIRD_PARTY_NOTICES.md`.

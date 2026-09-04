@@ -57,8 +57,10 @@ Only `data/<project>/0_original_grdecl/` is versioned. Generated project workflo
 [uv](https://docs.astral.sh/uv/getting-started/installation/) is the recommended dependency manager. It creates a project-local environment using the versions recorded in `uv.lock`.
 
 ```powershell
+# Windows only, if uv is not already installed:
 winget install --id=astral-sh.uv -e
-cd C:\GGS\go-forward
+
+# Run these from the root of your cloned GO-Forward repository:
 uv sync --all-extras
 uv run python run_dashboard.py
 ```

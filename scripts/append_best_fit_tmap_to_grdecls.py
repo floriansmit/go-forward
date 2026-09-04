@@ -262,9 +262,17 @@ def write_property(handle, keyword: str, values, values_per_line: int = 6) -> No
     handle.write("/\n")
 
 
-def append_properties(grdecl_path: Path, pointset_path: Path, output_path: Path) -> dict[str, int]:
-    columns, point_rows = read_pointset(pointset_path)
+def selected_property_indices(columns: list[str], include_columns: set[str] | None = None) -> list[tuple[int, str]]:
+    selected = {normalized_property_key(column) for column in include_columns or set()}
     property_indices = [(index, column) for index, column in enumerate(columns) if column.lower() not in IDENTITY_COLUMNS]
+    if selected:
+        property_indices = [(index, column) for index, column in property_indices if normalized_property_key(column) in selected]
+    return property_indices
+
+
+def append_properties(grdecl_path: Path, pointset_path: Path, output_path: Path, include_columns: set[str] | None = None) -> dict[str, int]:
+    columns, point_rows = read_pointset(pointset_path)
+    property_indices = selected_property_indices(columns, include_columns)
     if not property_indices:
         raise ValueError(f"{pointset_path.name} has no returned T>Map properties")
     centers = grdecl_cell_centers(grdecl_path)
@@ -323,7 +331,12 @@ def read_tmap_table(path: Path) -> tuple[list[str], list[list[str]]]:
     return columns, rows
 
 
-def append_column_interpolated_properties(grdecl_path: Path, pointset_path: Path, output_path: Path) -> None:
+def append_column_interpolated_properties(
+    grdecl_path: Path,
+    pointset_path: Path,
+    output_path: Path,
+    include_columns: set[str] | None = None,
+) -> None:
     """Append sparse returned T>Map values by I/J-column vertical interpolation.
 
     Real returns can omit original cells and may have a different facies label.
@@ -332,7 +345,7 @@ def append_column_interpolated_properties(grdecl_path: Path, pointset_path: Path
     never overwrite the original GRDECL facies property.
     """
     columns, rows = read_tmap_table(pointset_path)
-    property_indices = [(index, name) for index, name in enumerate(columns) if name.lower() not in IDENTITY_COLUMNS]
+    property_indices = selected_property_indices(columns, include_columns)
     if not property_indices:
         raise ValueError(f"{pointset_path.name} has no T>Map properties to append")
 
@@ -447,17 +460,23 @@ def find_pointset_for_grdecl(grdecl_path: Path, pointset_dir: Path, reduced: boo
     return candidates[0]
 
 
-def append_interpolated_properties(grdecl_path: Path, pointset_path: Path, output_path: Path, facies_property: str) -> None:
+def append_interpolated_properties(
+    grdecl_path: Path,
+    pointset_path: Path,
+    output_path: Path,
+    facies_property: str,
+    include_columns: set[str] | None = None,
+) -> None:
     """Append sparse Best-fit results by vertical interpolation within facies/I/J columns."""
     raw_columns, _ = read_tmap_table(pointset_path)
     if "CellIndex" not in raw_columns:
-        append_column_interpolated_properties(grdecl_path, pointset_path, output_path)
+        append_column_interpolated_properties(grdecl_path, pointset_path, output_path, include_columns)
         return
     columns, rows = read_pointset(pointset_path)
     cell_index_attr = next((index for index, column in enumerate(columns) if column.lower() == "cellindex"), None)
     if cell_index_attr is None:
         raise ValueError(f"{pointset_path.name} must retain CellIndex after Facies for reduced Best-fit interpolation")
-    property_indices = [(index, column) for index, column in enumerate(columns) if column.lower() not in IDENTITY_COLUMNS]
+    property_indices = selected_property_indices(columns, include_columns)
     if not property_indices:
         raise ValueError(f"{pointset_path.name} has no returned T>Map properties")
     table = defaultdict(list)
@@ -468,7 +487,7 @@ def append_interpolated_properties(grdecl_path: Path, pointset_path: Path, outpu
     raw_columns = []
     raw_rows = []
     in_header = False
-    with pointset_path.open("r", encoding="utf-8") as handle:
+    with open(path_for_io(pointset_path), "r", encoding="utf-8", errors="replace") as handle:
         for raw in handle:
             line = raw.strip()
             if line == "BEGIN HEADER": in_header = True; continue
@@ -512,7 +531,9 @@ def main() -> None:
     parser.add_argument("--single-pointset", type=Path, help="Point set to use with --single-grdecl.")
     parser.add_argument("--vertical-interpolate", action="store_true", help="Interpolate sparse reduced Best-fit point-set results vertically within facies/I/J columns.")
     parser.add_argument("--property", default="Facies", help="Facies keyword used for reduced Best-fit interpolation.")
+    parser.add_argument("--include-columns", nargs="+", help="Returned T>Map property columns to append. Defaults to all non-identity columns.")
     args = parser.parse_args()
+    include_columns = set(args.include_columns) if args.include_columns else None
 
     if args.single_grdecl:
         if not args.single_pointset:
@@ -532,10 +553,10 @@ def main() -> None:
         output_name = grdecl_path.with_suffix("").name + f"_with{provenance}_tmap_properties.grdecl"
         output_path = args.output_dir / output_name
         if args.vertical_interpolate:
-            append_interpolated_properties(grdecl_path, pointset_path, output_path, args.property)
+            append_interpolated_properties(grdecl_path, pointset_path, output_path, args.property, include_columns)
             print(f"{grdecl_path.name} <- {pointset_path.name}: vertically interpolated -> {output_path}")
             continue
-        stats = append_properties(grdecl_path, pointset_path, output_path)
+        stats = append_properties(grdecl_path, pointset_path, output_path, include_columns)
         print(
             f"{grdecl_path.name} <- {pointset_path.name}: "
             f"{stats['matched']}/{stats['cells']} cells populated, {stats['properties']} properties, "

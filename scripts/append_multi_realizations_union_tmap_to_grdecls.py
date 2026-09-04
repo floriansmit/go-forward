@@ -4,6 +4,7 @@ import argparse
 from collections import defaultdict
 from pathlib import Path
 
+from append_best_fit_tmap_to_grdecls import normalized_property_key
 from grdecl_utils import grdecl_keyword, path_for_io, tokenize_grdecl, write_property
 
 
@@ -49,7 +50,15 @@ def cell_count(grdecl_path: Path) -> int:
     return nx * ny * nz
 
 
-def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, dict[int, dict[str, str]]]]:
+def selected_property_indices(columns: list[str], start_index: int, include_columns: set[str] | None = None) -> list[tuple[int, str]]:
+    selected = {normalized_property_key(column) for column in include_columns or set()}
+    property_indices = [(index, column) for index, column in enumerate(columns) if index >= start_index and column.lower() not in IDENTITY_COLUMNS]
+    if selected:
+        property_indices = [(index, column) for index, column in property_indices if normalized_property_key(column) in selected]
+    return property_indices
+
+
+def read_union_tmap_pointsets(pointset_dir: Path, include_columns: set[str] | None = None) -> tuple[list[str], dict[int, dict[int, dict[str, str]]]]:
     attrs_by_realization: dict[int, dict[int, dict[str, str]]] = defaultdict(dict)
     property_columns: list[str] = []
     found_any = False
@@ -58,7 +67,7 @@ def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, 
         found_any = True
         columns: list[str] = []
         in_header = False
-        with path.open("r", encoding="utf-8") as handle:
+        with open(path_for_io(path), "r", encoding="utf-8", errors="replace") as handle:
             for raw in handle:
                 line = raw.strip()
                 if not line:
@@ -77,7 +86,7 @@ def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, 
 
                 if columns[:6] != ["X", "Y", "Z", "Facies", "Realization", "CellIndex"]:
                     raise ValueError(f"{path.name} must contain X,Y,Z,Facies,Realization,CellIndex before T>Map properties")
-                property_indices = [(index, column) for index, column in enumerate(columns) if index >= 6 and column.lower() not in IDENTITY_COLUMNS]
+                property_indices = selected_property_indices(columns, 6, include_columns)
                 for _, column in property_indices:
                     if column not in property_columns:
                         property_columns.append(column)
@@ -92,9 +101,11 @@ def read_union_tmap_pointsets(pointset_dir: Path) -> tuple[list[str], dict[int, 
     return property_columns, attrs_by_realization
 
 
-def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path) -> None:
+def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, include_columns: set[str] | None = None) -> None:
     grdecls = sorted(path for path in grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
-    property_columns, attrs_by_realization = read_union_tmap_pointsets(pointset_dir)
+    property_columns, attrs_by_realization = read_union_tmap_pointsets(pointset_dir, include_columns)
+    if not property_columns:
+        raise ValueError("No selected union T>Map properties were found")
     Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
 
     for realization_index, grdecl_path in enumerate(grdecls, start=1):
@@ -121,8 +132,9 @@ def main() -> None:
     parser.add_argument("--grdecl-dir", type=Path, default=DEFAULT_GRDECL_DIR)
     parser.add_argument("--pointset-dir", type=Path, default=DEFAULT_POINTSET_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--include-columns", nargs="+", help="Returned T>Map property columns to append. Defaults to all non-identity columns.")
     args = parser.parse_args()
-    append_to_grdecls(args.grdecl_dir, args.pointset_dir, args.output_dir)
+    append_to_grdecls(args.grdecl_dir, args.pointset_dir, args.output_dir, set(args.include_columns) if args.include_columns else None)
 
 
 if __name__ == "__main__":

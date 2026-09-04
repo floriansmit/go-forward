@@ -70,9 +70,10 @@ def interpolated_property_values(
     table,
     property_columns: list[str],
     no_extrapolate: bool,
+    petrel_property_columns=PETREL_PROPERTY_COLUMNS,
 ) -> tuple[dict[str, list[str]], int]:
     source_by_key = {normalized_property_key(column): column for column in property_columns}
-    values_by_column = {column: [] for column, _, _ in PETREL_PROPERTY_COLUMNS}
+    values_by_column = {column: [] for column, _, _ in petrel_property_columns}
     missing_series = 0
 
     for (x, y, z), facies in zip(centers, facies_values):
@@ -88,9 +89,20 @@ def interpolated_property_values(
     return values_by_column, missing_series
 
 
-def write_petrel_standard_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, no_extrapolate: bool) -> None:
-    property_columns, table = read_uber_tmap_pointsets(pointset_dir)
-    required_columns = [column for column, _, _ in PETREL_PROPERTY_COLUMNS]
+def write_petrel_standard_grdecls(
+    grdecl_dir: Path,
+    pointset_dir: Path,
+    output_dir: Path,
+    no_extrapolate: bool,
+    include_columns: set[str] | None = None,
+) -> None:
+    selected_keys = {normalized_property_key(column) for column in include_columns or set()}
+    selected_petrel_columns = [
+        spec for spec in PETREL_PROPERTY_COLUMNS
+        if not selected_keys or spec[0] in selected_keys
+    ]
+    property_columns, table = read_uber_tmap_pointsets(pointset_dir, include_columns)
+    required_columns = [column for column, _, _ in selected_petrel_columns]
     available_keys = {normalized_property_key(column) for column in property_columns}
     missing_columns = [column for column in required_columns if column not in available_keys]
     if missing_columns:
@@ -106,9 +118,9 @@ def write_petrel_standard_grdecls(grdecl_dir: Path, pointset_dir: Path, output_d
             raise ValueError(f"{grdecl_path.name}: {len(centers)} centres but {len(facies_values)} facies values")
 
         values_by_column, missing_series = interpolated_property_values(
-            centers, facies_values, table, property_columns, no_extrapolate
+            centers, facies_values, table, property_columns, no_extrapolate, selected_petrel_columns
         )
-        permeability_mean_values = values_by_column[PERMEABILITY_MEAN_COLUMN]
+        permeability_mean_values = values_by_column.get(PERMEABILITY_MEAN_COLUMN)
 
         output_path = output_dir / f"{grdecl_path.with_suffix('').name}_with_uber_petrel_standard_properties.grdecl"
         with grdecl_path.open("r", encoding="utf-8") as source, open(path_for_io(output_path), "w", encoding="utf-8", newline="\n") as out:
@@ -125,11 +137,12 @@ def write_petrel_standard_grdecls(grdecl_dir: Path, pointset_dir: Path, output_d
             write_petrel_property(out, "SATNUM", "Facies_as_SATNUM", facies_text)
             write_petrel_property(out, "ROCK", "Facies_as_ROCK", facies_text)
             write_petrel_property(out, "FIPNUM", "Facies_as_FIPNUM", facies_text)
-            for column, keyword, property_name in PETREL_PROPERTY_COLUMNS:
+            for column, keyword, property_name in selected_petrel_columns:
                 write_petrel_property(out, keyword, property_name, values_by_column[column])
-            write_petrel_property(out, "PERMX", "permeability_mean_X", permeability_mean_values)
-            write_petrel_property(out, "PERMY", "permeability_mean_Y", permeability_mean_values)
-            write_petrel_property(out, "PERMZ", "permeability_mean_Z", permeability_mean_values)
+            if permeability_mean_values is not None:
+                write_petrel_property(out, "PERMX", "permeability_mean_X", permeability_mean_values)
+                write_petrel_property(out, "PERMY", "permeability_mean_Y", permeability_mean_values)
+                write_petrel_property(out, "PERMZ", "permeability_mean_Z", permeability_mean_values)
 
         print(f"{grdecl_path.name}: missing XY/facies series for {missing_series}/{len(centers)} cells -> {output_path}")
 
@@ -142,8 +155,15 @@ def main() -> None:
     parser.add_argument("--pointset-dir", type=Path, default=DEFAULT_POINTSET_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--no-extrapolate", action="store_true", help="Use -77777 outside Uber Z range instead of nearest-level values.")
+    parser.add_argument("--include-columns", nargs="+", help="Returned T>Map property columns to write. Defaults to all Petrel-standard properties.")
     args = parser.parse_args()
-    write_petrel_standard_grdecls(args.grdecl_dir, args.pointset_dir, args.output_dir, args.no_extrapolate)
+    write_petrel_standard_grdecls(
+        args.grdecl_dir,
+        args.pointset_dir,
+        args.output_dir,
+        args.no_extrapolate,
+        set(args.include_columns) if args.include_columns else None,
+    )
 
 
 if __name__ == "__main__":

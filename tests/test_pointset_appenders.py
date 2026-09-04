@@ -10,6 +10,7 @@ from scripts.append_best_fit_tmap_to_grdecls import (
     read_pointset,
     append_properties,
 )
+from scripts.append_multi_realizations_uber_tmap_to_grdecls import read_uber_tmap_pointsets
 
 
 def test_normalized_property_key():
@@ -48,3 +49,56 @@ def test_append_properties_to_grdecl(tmp_path: Path, mini_grdecl_path: Path, min
     content = output_grdecl.read_text(encoding="utf-8")
     assert "PORO50" in content
     assert "PERM50" in content
+
+
+def test_read_uber_pointsets_accepts_combined_multi_facies_export(tmp_path: Path):
+    combined = tmp_path / "uber_combined_tmap.txt"
+    combined.write_text(
+        """# Petrel Points with Attributes
+VERSION 1
+BEGIN HEADER
+X
+Y
+Z
+INT, Facies
+FLOAT, "Total porosity mean (vol %)"
+FLOAT, "Permeability mean (md)"
+END HEADER
+100.00 200.00 -1000.00 3 21.5 150.0
+100.00 200.00 -1010.00 3 20.5 125.0
+100.00 200.00 -1000.00 4 16.0 25.0
+""",
+        encoding="utf-8",
+    )
+
+    property_columns, table = read_uber_tmap_pointsets(tmp_path)
+
+    assert property_columns == ["Total porosity mean (vol %)", "Permeability mean (md)"]
+    assert sorted(table) == [3, 4]
+    assert len(table[3][("100.00", "200.00")]) == 2
+    assert len(table[4][("100.00", "200.00")]) == 1
+
+
+def test_read_uber_pointsets_filters_selected_columns(tmp_path: Path):
+    combined = tmp_path / "uber_combined_tmap.txt"
+    combined.write_text(
+        """# Petrel Points with Attributes
+VERSION 1
+BEGIN HEADER
+X
+Y
+Z
+INT, Facies
+FLOAT, "Total porosity mean (vol %)"
+FLOAT, "Permeability mean (md)"
+END HEADER
+100.00 200.00 -1000.00 3 21.5 150.0
+""",
+        encoding="utf-8",
+    )
+
+    property_columns, table = read_uber_tmap_pointsets(tmp_path, {"Permeability mean (md)"})
+
+    assert property_columns == ["Permeability mean (md)"]
+    _, attrs = table[3][("100.00", "200.00")][0]
+    assert attrs == {"Permeability mean (md)": "150.0"}

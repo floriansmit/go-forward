@@ -6,6 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from grdecl_utils import grdecl_cell_centers, grdecl_keyword, path_for_io, tokenize_grdecl, write_property
+from append_best_fit_tmap_to_grdecls import normalized_property_key
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,16 +57,26 @@ def expanded_facies_values(path: Path, keyword: str = "Facies") -> list[int]:
     return expanded
 
 
-def read_uber_tmap_pointsets(pointset_dir: Path):
+def selected_property_indices(columns: list[str], include_columns: set[str] | None = None) -> list[tuple[int, str]]:
+    selected = {normalized_property_key(column) for column in include_columns or set()}
+    property_indices = [(index, column) for index, column in enumerate(columns) if column.lower() not in IDENTITY_COLUMNS]
+    if selected:
+        property_indices = [(index, column) for index, column in property_indices if normalized_property_key(column) in selected]
+    return property_indices
+
+
+def read_uber_tmap_pointsets(pointset_dir: Path, include_columns: set[str] | None = None):
     property_columns: list[str] = []
     table = defaultdict(lambda: defaultdict(list))
     found_any = False
+    file_facies: dict[str, set[int]] = {}
 
     for path in tmap_pointset_files(pointset_dir):
         found_any = True
         columns: list[str] = []
         in_header = False
-        with path.open("r", encoding="utf-8") as handle:
+        facies_in_file: set[int] = set()
+        with open(path_for_io(path), "r", encoding="utf-8", errors="replace") as handle:
             for raw in handle:
                 line = raw.strip()
                 if not line:
@@ -84,17 +95,29 @@ def read_uber_tmap_pointsets(pointset_dir: Path):
                 if columns[:3] != ["X", "Y", "Z"] or "Facies" not in columns:
                     raise ValueError(f"{path.name} must contain X,Y,Z and a Facies column")
                 facies_index = columns.index("Facies")
-                property_indices = [(index, column) for index, column in enumerate(columns) if column.lower() not in IDENTITY_COLUMNS]
+                property_indices = selected_property_indices(columns, include_columns)
                 for _, column in property_indices:
                     if column not in property_columns:
                         property_columns.append(column)
                 parts = line.split()
                 x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
                 facies = int(float(parts[facies_index]))
+                facies_in_file.add(facies)
                 table[facies][(f"{x:.2f}", f"{y:.2f}")].append((z, {column: parts[index] for index, column in property_indices}))
+        file_facies[path.name] = facies_in_file
 
     if not found_any:
         raise SystemExit(f"No Uber T>Map point sets found in {pointset_dir}")
+
+    for filename, facies_codes in file_facies.items():
+        if len(facies_codes) > 1:
+            facies_text = ", ".join(str(code) for code in sorted(facies_codes))
+            print(f"{filename}: detected combined Uber T>Map export with facies {facies_text}", flush=True)
+        elif facies_codes:
+            facies = next(iter(facies_codes))
+            print(f"{filename}: detected single-facies Uber T>Map export for facies {facies}", flush=True)
+        else:
+            print(f"{filename}: no data rows found", flush=True)
 
     for xy_table in table.values():
         for values in xy_table.values():
@@ -123,8 +146,17 @@ def interpolate(values: list[tuple[float, dict[str, str]]], z: float, column: st
     return f"{v0 + fraction * (v1 - v0):.6g}"
 
 
-def append_to_grdecls(grdecl_dir: Path, pointset_dir: Path, output_dir: Path, no_extrapolate: bool, facies_property: str) -> None:
-    property_columns, table = read_uber_tmap_pointsets(pointset_dir)
+def append_to_grdecls(
+    grdecl_dir: Path,
+    pointset_dir: Path,
+    output_dir: Path,
+    no_extrapolate: bool,
+    facies_property: str,
+    include_columns: set[str] | None = None,
+) -> None:
+    property_columns, table = read_uber_tmap_pointsets(pointset_dir, include_columns)
+    if not property_columns:
+        raise ValueError("No selected Uber T>Map properties were found")
     Path(path_for_io(output_dir)).mkdir(parents=True, exist_ok=True)
 
     grdecls = sorted(path for path in grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
@@ -163,8 +195,16 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--property", default="Facies", help="GRDECL facies property keyword (case-sensitive).")
     parser.add_argument("--no-extrapolate", action="store_true", help="Use -77777 outside Uber Z range instead of nearest-level values.")
+    parser.add_argument("--include-columns", nargs="+", help="Returned T>Map property columns to append. Defaults to all non-identity columns.")
     args = parser.parse_args()
-    append_to_grdecls(args.grdecl_dir, args.pointset_dir, args.output_dir, args.no_extrapolate, args.property)
+    append_to_grdecls(
+        args.grdecl_dir,
+        args.pointset_dir,
+        args.output_dir,
+        args.no_extrapolate,
+        args.property,
+        set(args.include_columns) if args.include_columns else None,
+    )
 
 
 if __name__ == "__main__":

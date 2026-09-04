@@ -893,6 +893,24 @@ def tmap_pointset_has_column(path: Path, column_name: str) -> bool:
     return any(column.lower() == column_name.lower() for column in tmap_pointset_columns(path))
 
 
+def appendable_tmap_columns(paths: list[Path]) -> list[str]:
+    """Return non-identity T>Map columns available for GRDECL append."""
+    columns: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        for column in tmap_pointset_columns(path):
+            key = _grdecl_implementation.normalized_property_key(column)
+            if column.lower() in _grdecl_implementation.IDENTITY_COLUMNS or key in seen:
+                continue
+            seen.add(key)
+            columns.append(column)
+    return columns
+
+
+def append_include_args(columns: list[str]) -> list[str]:
+    return ["--include-columns", *columns] if columns else []
+
+
 def display_path(path: Path) -> str:
     try:
         return str(path.relative_to(ROOT))
@@ -4180,8 +4198,21 @@ with tab2:
                         st.caption(f"Matched to source 3D pointset `{matched_source.name}` from T>Map provenance `{provenance}`.")
                     else:
                         st.warning("No source 3D pointset could be matched from this file's name or T>Map header. It cannot be appended until its provenance is identifiable.")
-        if approach_name != "Best-fit model" and tmap_file and st.button("Append returned T>Map data back to GRDECLs", key="append_tmap"):
-            commands = append_commands_for_project(approach, source_grdecl_dir)
+        append_columns: list[str] = []
+        if tmap_files:
+            available_append_columns = appendable_tmap_columns(tmap_files)
+            if available_append_columns:
+                append_columns = st.multiselect(
+                    "T>Map properties to append into GRDECL",
+                    available_append_columns,
+                    default=available_append_columns[: min(12, len(available_append_columns))],
+                    key=f"tab2_append_columns_{approach_name}",
+                )
+                st.caption(f"{len(append_columns)} of {len(available_append_columns)} returned property column(s) selected.")
+            else:
+                st.warning("No returned T>Map property columns were found beyond identity columns.")
+        if approach_name != "Best-fit model" and tmap_file and st.button("Append returned T>Map data back to GRDECLs", key="append_tmap", disabled=not append_columns):
+            commands = [command + append_include_args(append_columns) for command in append_commands_for_project(approach, source_grdecl_dir)]
             run_commands(commands, show_live_progress=True)
         if approach_name == "Best-fit model" and tmap_files:
             st.divider()
@@ -4194,6 +4225,7 @@ with tab2:
             )
             if st.button("Append selected Best-fit models", key="append_bestfit_batch", disabled=not append_files):
                 commands: list[list[str]] = []
+                include_args = append_include_args(append_columns)
                 for returned_file in append_files:
                     source_grdecl = source_grdecl_for_pointset(returned_file, source_grdecl_dir, pointset_files)
                     if source_grdecl is None:
@@ -4206,7 +4238,7 @@ with tab2:
                     extra = ["--single-grdecl", str(source_grdecl), "--single-pointset", str(returned_file)]
                     if reduced_file:
                         extra.extend(["--vertical-interpolate", "--property", "Facies"])
-                    commands.extend([[*command, *extra] for command in append_commands_for_project(approach, source_grdecl_dir)])
+                    commands.extend([[*command, *extra, *include_args] for command in append_commands_for_project(approach, source_grdecl_dir)])
                 if commands:
                     run_commands(commands)
         if approach_name == "Best-fit model" and tmap_file and (is_reduced or "_tmap_real" in tmap_file.name):

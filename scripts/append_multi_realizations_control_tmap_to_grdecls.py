@@ -5,6 +5,7 @@ import bisect
 from collections import defaultdict
 from pathlib import Path
 
+from append_best_fit_tmap_to_grdecls import normalized_property_key
 from grdecl_utils import grdecl_cell_centers, grdecl_keyword, path_for_io, tokenize_grdecl, write_property
 
 
@@ -61,7 +62,15 @@ def expanded_facies(path: Path, keyword: str) -> list[int]:
     return expanded
 
 
-def read_control_pointsets(pointset_dir: Path):
+def selected_property_indices(columns: list[str], start_index: int, include_columns: set[str] | None = None) -> list[tuple[int, str]]:
+    selected = {normalized_property_key(column) for column in include_columns or set()}
+    property_indices = [(index, column) for index, column in enumerate(columns) if index >= start_index and column.lower() not in IDENTITY_COLUMNS]
+    if selected:
+        property_indices = [(index, column) for index, column in property_indices if normalized_property_key(column) in selected]
+    return property_indices
+
+
+def read_control_pointsets(pointset_dir: Path, include_columns: set[str] | None = None):
     properties: list[str] = []
     table = defaultdict(list)
     found_any = False
@@ -69,7 +78,7 @@ def read_control_pointsets(pointset_dir: Path):
         found_any = True
         columns: list[str] = []
         in_header = False
-        with path.open("r", encoding="utf-8") as handle:
+        with open(path_for_io(path), "r", encoding="utf-8", errors="replace") as handle:
             for raw in handle:
                 line = raw.strip()
                 if not line:
@@ -98,7 +107,7 @@ def read_control_pointsets(pointset_dir: Path):
                         f"{path.name} must contain X,Y,Z,Facies,ControlColumn before T>Map properties "
                         "(or the legacy Realization,CellIndex fields)"
                     )
-                property_indices = [(index, column) for index, column in enumerate(columns) if index >= property_start and column.lower() not in IDENTITY_COLUMNS]
+                property_indices = selected_property_indices(columns, property_start, include_columns)
                 for _, column in property_indices:
                     if column not in properties:
                         properties.append(column)
@@ -140,9 +149,12 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--property", default="Facies", help="GRDECL facies property keyword (case-sensitive).")
     parser.add_argument("--no-extrapolate", action="store_true")
+    parser.add_argument("--include-columns", nargs="+", help="Returned T>Map property columns to append. Defaults to all non-identity columns.")
     args = parser.parse_args()
 
-    properties, table = read_control_pointsets(args.pointset_dir)
+    properties, table = read_control_pointsets(args.pointset_dir, set(args.include_columns) if args.include_columns else None)
+    if not properties:
+        raise ValueError("No selected control T>Map properties were found")
     Path(path_for_io(args.output_dir)).mkdir(parents=True, exist_ok=True)
     grdecls = sorted(path for path in args.grdecl_dir.iterdir() if path.is_file() and path.suffix.lower() == ".grdecl")
     for realization_index, grdecl in enumerate(grdecls, start=1):

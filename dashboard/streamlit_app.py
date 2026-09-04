@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 EXTERNAL_TOOLS = ROOT / "external-tools"
 DATA_ROOT = ROOT / "data"
-ORIGINAL_GRDECL_FOLDER = "0_original_grdecl"
+ORIGINAL_GRDECL_FOLDER = "original_grdecl"
 DEFAULT_PROJECT_NAME = "MVP_Gassum_mvp"
 WORKFLOW_PROFILES = {
     "MVP": {
@@ -1735,12 +1735,12 @@ def remove_project_dialog(project_name: str) -> None:
     scope = st.radio(
         "What should be deleted?",
         ["Generated workflow data", "Entire project data"],
-        help="Generated workflow data keeps 0_original_grdecl and its facies configuration. Entire project data permanently removes the complete project folder.",
+        help="Generated workflow data keeps original_grdecl and its facies configuration. Entire project data permanently removes the complete project folder.",
     )
     if scope == "Generated workflow data":
-        st.info("Deletes generated workflow folders but retains 0_original_grdecl and its facies definitions.")
+        st.info("Deletes generated workflow folders but retains original_grdecl and its facies definitions.")
     else:
-        st.warning("Permanently deletes the complete project data folder, including 0_original_grdecl and facies definitions.")
+        st.warning("Permanently deletes the complete project data folder, including original_grdecl and facies definitions.")
     cancel, remove = st.columns(2)
     if cancel.button("Cancel"):
         st.rerun()
@@ -3651,7 +3651,7 @@ def render_profile_grdecl_inspection(profile: str) -> None:
             source_grdecl_file_import_controls(f"{profile.lower().replace(' ', '_')}_source_import")
         grdecl = file_selector("Source GRDECL", source_dir, ("*.grdecl", "*.GRDECL"), f"{profile}_inspection_grdecl")
         if not grdecl:
-            st.info("Add a GRDECL to this project's 0_original_grdecl folder to inspect it here.")
+            st.info("Add a GRDECL to this project's original_grdecl folder to inspect it here.")
         else:
             dims = grdecl_dimensions(str(grdecl))
             first, second = st.columns(2)

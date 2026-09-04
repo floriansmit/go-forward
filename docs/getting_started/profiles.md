@@ -6,7 +6,7 @@ GO-Forward organizes input models and output artifacts by project. Each project 
 data/
 └── <project-name>/
     ├── project_config.json            # Profile selection & metadata
-    └── 0_original_grdecl/             # Input GRDECL realization files
+    └── original_grdecl/               # Input GRDECL realization files
         ├── *.grdecl
         └── facies_config.json         # Facies/Rock-type labels and colors
 ```
@@ -49,4 +49,3 @@ When switching projects in the Streamlit dashboard sidebar, the dashboard dynami
 
 ### Crystalline Profile (Pluton Demo)
 ![Crystalline Profile](../assets/images/crystalline_tab1_inspect.png)
-

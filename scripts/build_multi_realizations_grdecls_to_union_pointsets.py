@@ -10,7 +10,7 @@ from facies_config import DEFAULT_CONFIG_PATH, facies_label
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "original_grdecl"
 DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization union approach" / "01_union_pointsets_by_facies"
 
 

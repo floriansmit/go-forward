@@ -3,7 +3,7 @@
 Each project stores its classification definition beside the source GRDECLs:
 
 ```text
-data/<project>/0_original_grdecl/facies_config.json
+data/<project>/original_grdecl/facies_config.json
 ```
 
 The JSON field names retain `facies_*` for backwards compatibility, but the dashboard presents them according to the project profile:

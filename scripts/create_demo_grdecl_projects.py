@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = ROOT / "data"
-ORIGINAL_GRDECL_FOLDER = "0_original_grdecl"
+ORIGINAL_GRDECL_FOLDER = "original_grdecl"
 
 
 def write_values(handle, values: list[float | int], per_line: int = 8) -> None:

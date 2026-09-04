@@ -24,7 +24,7 @@ The left sidebar creates and selects projects. Choose a project type explicitly;
 | Carbonates | FSM GRDECL → Mesh · FDM Carbonate Diagenesis · FFM Geomech preparation · FFM Run DFM · FFM View results |
 | Crystalline rocks | GRDECL Inspect · FFM Geomech preparation · FFM Run DFM · FFM View results |
 
-Projects are listed from `data/<project>/`. Import one or more source GRDECLs from the first relevant tab; they are copied to `data/<project>/0_original_grdecl/`. Generated workflow folders are created beside that starting folder and are not versioned.
+Projects are listed from `data/<project>/`. Import one or more source GRDECLs from the first relevant tab; they are copied to `data/<project>/original_grdecl/`. Generated workflow folders are created beside that starting folder and are not versioned.
 
 ## Viewer behaviour
 

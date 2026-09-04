@@ -9,7 +9,7 @@ from grdecl_utils import grdecl_keyword, path_for_io, tokenize_grdecl, write_pro
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "original_grdecl"
 DEFAULT_POINTSET_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization union approach" / "02_union_pointsets_with_tmap_data"
 DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization union approach" / "03_augmented_grdecls_from_union_lookup"
 NO_VALUE = "-77777"

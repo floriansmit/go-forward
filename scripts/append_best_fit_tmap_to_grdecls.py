@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "original_grdecl"
 DEFAULT_POINTSET_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Best-fit approach" / "02_3d_points_with_tmap_data"
 DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Best-fit approach" / "03_augmented_grdecls_with_tmap_data"
 NO_VALUE = "-77777"

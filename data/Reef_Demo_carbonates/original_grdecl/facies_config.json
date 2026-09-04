@@ -1,6 +1,6 @@
 {
   "facies_property": "Facies",
-  "source_grdecl_directory": "data/Reef_Demo_carbonates/0_original_grdecl",
+  "source_grdecl_directory": "data/Reef_Demo_carbonates/original_grdecl",
   "source_grdecl_files": [
     "carbonate_reef_demo.grdecl"
   ],

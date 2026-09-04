@@ -17,7 +17,7 @@ from grdecl_utils import grdecl_cell_centers, path_for_io, tokenize_grdecl
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl" / "gassum_base.grdecl"
+DEFAULT_GRDECL = ROOT / "data" / "MVP_Gassum_mvp" / "original_grdecl" / "gassum_base.grdecl"
 DEFAULT_EXPORT = ROOT / "reference_examples" / "tmap_example" / "gassum_base_tmap.txt"
 DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Geocosm handoff"
 

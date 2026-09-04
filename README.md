@@ -32,7 +32,7 @@ The active profile is fixed when a project is created. Its suffix is part of the
 ├── data/
 │   └── <project>/
 │       ├── project_config.json        # Active profile configuration
-│       ├── 0_original_grdecl/         # Authoritative source GRDECL models
+│       ├── original_grdecl/           # Authoritative source GRDECL models
 │       │   ├── *.grdecl
 │       │   └── facies_config.json     # Facies/Rock-type definitions and colours
 │       └── <numbered workflow folders>/  # Generated locally; excluded from Git
@@ -51,7 +51,7 @@ The repository includes four input projects so each profile is immediately visib
 - `Reef_Demo_carbonates`
 - `Crystalline_Pluton_Demo_crystalline`
 
-Only `data/<project>/0_original_grdecl/` is versioned. Generated project workflow folders can be large and are recreated locally from original GRDECLs or real returned modelling data.
+Only `data/<project>/original_grdecl/` is versioned. Generated project workflow folders can be large and are recreated locally from original GRDECLs or real returned modelling data.
 
 ## Install and run
 
@@ -117,7 +117,7 @@ uv run python -m mkdocs build --strict
 
 Create a project in the left sidebar by entering a base name and explicitly choosing a project type. The dashboard adds the workflow suffix and creates one project-data folder.
 
-Use **Import source GRDECL file(s)** in the first workflow tab to select one or more `.grdecl` files. They are copied into `data/<project>/0_original_grdecl/`, alongside `facies_config.json`. All generated workflow folders sit beside this starting folder, so the full provenance chain is visible from one project directory.
+Use **Import source GRDECL file(s)** in the first workflow tab to select one or more `.grdecl` files. They are copied into `data/<project>/original_grdecl/`, alongside `facies_config.json`. All generated workflow folders sit beside this starting folder, so the full provenance chain is visible from one project directory.
 
 Define facies, carbonate facies, or rock types in the first tab. The same project configuration supplies names and discrete colours in the viewers. Only siliciclastic/MVP projects have the T>Map inclusion switch.
 

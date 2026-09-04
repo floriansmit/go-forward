@@ -50,7 +50,7 @@ def selected(args: argparse.Namespace, approach: str) -> bool:
 
 def main() -> int:
     args = parse_args()
-    source_dir = args.source_dir or ROOT / "data" / args.project / "0_original_grdecl"
+    source_dir = args.source_dir or ROOT / "data" / args.project / "original_grdecl"
     source_dir = source_dir.resolve()
     facies_config = args.facies_config or source_dir / "facies_config.json"
     if not facies_config.exists():

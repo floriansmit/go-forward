@@ -8,7 +8,7 @@ Projects keep their original GRDECLs and all generated workflow data together:
 
 ```text
 data/<project>/
-  0_original_grdecl/
+  original_grdecl/
     *.grdecl
     facies_config.json
   Best-fit approach/
@@ -49,14 +49,14 @@ Only MVP and siliciclastic projects have a T>Map switch. Enable it only for clas
 The definitions are saved at:
 
 ```text
-data/<project>/0_original_grdecl/facies_config.json
+data/<project>/original_grdecl/facies_config.json
 ```
 
 For a scripted initialisation of a new siliciclastic source set:
 
 ```powershell
 $Project = "My_Project_siliciclastics"
-$SourceDir = ".\data\$Project\0_original_grdecl"
+$SourceDir = ".\data\$Project\original_grdecl"
 uv run python .\scripts\initialize_facies_config.py --grdecl-dir $SourceDir --property "Facies"
 ```
 
@@ -82,7 +82,7 @@ If an older return is vertically sampled rather than full resolution, the append
 
 ```powershell
 $Project = "Siliciclastics_Gassum_siliciclastics"
-$SourceDir = ".\data\$Project\0_original_grdecl"
+$SourceDir = ".\data\$Project\original_grdecl"
 $Out = ".\data\$Project\Best-fit approach"
 
 uv run python .\scripts\build_best_fit_grdecl_to_pointset.py `
@@ -106,7 +106,7 @@ All selected source models must have compatible grid dimensions and cell orderin
 
 ```powershell
 $Project = "MVP_Gassum_mvp"
-$SourceDir = ".\data\$Project\0_original_grdecl"
+$SourceDir = ".\data\$Project\original_grdecl"
 $Config = "$SourceDir\facies_config.json"
 $Out = ".\data\$Project"
 

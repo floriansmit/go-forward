@@ -10,7 +10,7 @@ from append_best_fit_tmap_to_grdecls import normalized_property_key
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "0_original_grdecl"
+DEFAULT_GRDECL_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "original_grdecl"
 DEFAULT_POINTSET_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization Uber approach" / "02_uber_pointsets_with_tmap_data"
 DEFAULT_OUTPUT_DIR = ROOT / "data" / "MVP_Gassum_mvp" / "Multi-realization Uber approach" / "03_augmented_grdecls_from_uber_lookup"
 NO_VALUE = "-77777"

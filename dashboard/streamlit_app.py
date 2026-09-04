@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - handled inside UI
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
+EXTERNAL_TOOLS = ROOT / "external-tools"
 DATA_ROOT = ROOT / "data"
 ORIGINAL_GRDECL_FOLDER = "0_original_grdecl"
 DEFAULT_PROJECT_NAME = "MVP_Gassum_mvp"
@@ -57,10 +58,10 @@ WORKFLOW_PROFILES = {
 REFERENCE_EXAMPLES_DIR = ROOT / "reference_examples"
 TMAP_EXAMPLE_FILE = REFERENCE_EXAMPLES_DIR / "tmap_example" / "gassum_base_tmap.txt"
 MICHAEL_DFN_EXAMPLE_DIR = REFERENCE_EXAMPLES_DIR / "michael_dfn_example"
-# Keep only the compact reference examples at the repository root. The
-# MAPAXES-aware executable is versioned with the dashboard scripts so a cloned
-# workflow has one clear runnable location.
-DEFAULT_DFN_EXECUTABLE = SCRIPTS / "DFMGenerator_GRDECL.exe"
+# DFM Generator is a separately developed Apache-2.0 component. It is
+# temporarily bundled for the demonstrator pending its upstream release at
+# https://github.com/JointFlow/DFMGenerator; see THIRD_PARTY_NOTICES.md.
+DEFAULT_DFN_EXECUTABLE = EXTERNAL_TOOLS / "DFMGenerator" / "DFMGenerator_GRDECL.exe"
 DFN_DEMO_GRID = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest.GRDECL"
 DFN_DEMO_CONFIG = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest.txt"
 DFN_DEMO_OUTPUT_DIR = MICHAEL_DFN_EXAMPLE_DIR / "FaultedGridGeometryPropertyTest_output"
@@ -4546,6 +4547,7 @@ with tab5:
                 st.caption(f"Selected input folder: {display_path(dfn_approach['dfn_dir'])}")
                 st.caption(f"{len(selected_dfn_inputs)} model(s) selected. Each model receives a reproducible, self-contained run folder.")
         executable_path = Path(st.text_input("DFM Generator executable", value=str(DEFAULT_DFN_EXECUTABLE), key="tab5_executable_20260807"))
+        st.caption("DFM Generator is an external Apache-2.0 executable, temporarily bundled for this demonstrator. See THIRD_PARTY_NOTICES.md; future releases will be available from https://github.com/JointFlow/DFMGenerator.")
         if not executable_path.exists():
             st.warning("Executable not found at this location. Select Michael's `DFMGenerator_GRDECL.exe` before launching.")
         if selected_dfn_inputs:

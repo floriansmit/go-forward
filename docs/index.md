@@ -47,3 +47,4 @@ graph LR
 - [Crystalline Rocks Workflow](workflows/crystalline.md): Pluton and shear-zone fracture models.
 - [Scripts Reference](api/scripts_reference.md): Command-line options and utilities reference.
 - [Testing & Verification](developer/testing.md): Running the `pytest` test suite and adding background tests.
+- [Third-party software](legal/third_party.md): DFM Generator attribution and licence boundary.

@@ -73,4 +73,5 @@ nav:
   - Developer & Reference:
       - Scripts Reference: api/scripts_reference.md
       - Testing & Verification: developer/testing.md
+      - Windows Portable Build: developer/windows-portable.md
       - Third-party software: legal/third_party.md

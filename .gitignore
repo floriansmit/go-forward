@@ -8,6 +8,8 @@ htmlcov/
 
 # MkDocs build output
 site/
+build/
+dist/
 
 # Local Streamlit secrets
 .streamlit/secrets.toml

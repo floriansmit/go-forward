@@ -67,6 +67,7 @@ nav:
       - Quickstart & Installation: getting_started/quickstart.md
       - Project Profiles: getting_started/profiles.md
   - Workflows & Technical Analyses:
+      - Badlands FSM: workflows/badlands-fsm.md
       - Siliciclastics Workflow: workflows/siliciclastics.md
       - Carbonates Workflow: workflows/carbonates.md
       - Crystalline Rocks Workflow: workflows/crystalline.md

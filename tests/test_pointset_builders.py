@@ -3,10 +3,29 @@ from __future__ import annotations
 
 from pathlib import Path
 import pytest
+from grdecl_utils import grdecl_active_mask
 
 from scripts.build_best_fit_grdecl_to_pointset import write_pointset as write_best_fit
 from scripts.build_multi_realizations_grdecls_to_control_pointsets import control_levels
 from scripts.build_multi_realizations_grdecls_to_uber_pointsets import z_levels, choose_spacing
+
+
+def test_bestfit_excludes_actnum_without_reindexing(tmp_path, mini_grdecl_path):
+    text = mini_grdecl_path.read_text().replace("18*1 /", "0 17*1 /")
+    mini_grdecl_path.write_text(text)
+    output = tmp_path / "points"
+    stats = write_best_fit(mini_grdecl_path, output, "FACIES", None, None, None)
+    assert stats["written"] == 17
+    assert output.read_text().split("END HEADER\n")[1].splitlines()[0].split()[-1] == "1"
+
+
+def test_actnum_optional_and_validated(mini_grdecl_path):
+    text = mini_grdecl_path.read_text()
+    mini_grdecl_path.write_text(text.replace("ACTNUM\n 18*1 /", ""))
+    assert grdecl_active_mask(mini_grdecl_path, 18) == [True] * 18
+    mini_grdecl_path.write_text(text.replace("18*1 /", "17*1 /"))
+    with pytest.raises(ValueError, match="binary cell values"):
+        grdecl_active_mask(mini_grdecl_path, 18)
 
 
 def test_build_best_fit_pointset_complete(tmp_path: Path, mini_grdecl_path: Path):

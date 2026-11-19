@@ -7,7 +7,7 @@ root = Path(SPECPATH).parent
 datas = []
 binaries = []
 hiddenimports = ["tkinter", "tkinter.ttk", "tkinter.messagebox"]
-for package in ("streamlit", "plotly", "pandas", "numpy", "scipy"):
+for package in ("streamlit", "plotly", "pandas", "numpy", "scipy", "h5py"):
     package_data, package_binaries, package_imports = collect_all(
         package, include_py_files=False,
         filter_submodules=lambda name: not any(part in {"tests", "conftest"} for part in name.split(".")),

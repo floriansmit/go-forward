@@ -4,7 +4,7 @@ The siliciclastics workflow models the evolution of clastic reservoirs from depo
 
 ```mermaid
 graph TD
-    A["1. Stratigraphic Forward Modelling<br/>(DionisosFlow GRDECL)"] --> B["2. 3D Point Set Construction<br/>(Choose: Best-fit / Union / Control / Uber)"]
+    A["1. Stratigraphic Forward Modelling<br/>(DionisosFlow or Badlands GRDECL)"] --> B["2. 3D Point Set Construction<br/>(Choose: Best-fit / Union / Control / Uber)"]
     B --> C["3. Forward Diagenesis Modelling<br/>(T>Map / Geocosm Simulation)"]
     C --> D["4. Property Appending & Interpolation<br/>(PORO, PERM, Cements, Stress)"]
     D --> E["5. Geomechanics Preparation<br/>(E, ν, μ, Gc, Dip Azimuth)"]
@@ -21,6 +21,13 @@ Source models originate as DionisosFlow 3D basin grids exported in Eclipse corne
 - `ZCORN`: Corner depths (positive depth in GRDECL; elevation $Z < 0$ in visualization).
 - `MAPAXES`: Coordinate transformation from local grid to projected world coordinates.
 - `FACIES`: Numeric integer facies code per cell.
+
+Alternatively, the Siliciclastics profile's initial **FSM · pyBadlands** tab
+prepares/runs Badlands and converts its regular stratal HDF5 output to GRDECL.
+Select a depth datum and explicitly map environmental proxies to project facies
+codes before adopting a model. See [Badlands FSM](badlands-fsm.md) for setup,
+supported outputs and scientific limitations. This does not change the existing
+DionisosFlow import or any T>Map append-back approach.
 
 ![Siliciclastics Model Preparation](../assets/images/siliciclastics_tab1_prepare.png)
 

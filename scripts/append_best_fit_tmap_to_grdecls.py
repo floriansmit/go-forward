@@ -61,7 +61,7 @@ def path_for_io(path: Path) -> str:
     return "\\\\?\\" + text
 
 
-def tokenize_grdecl(path: Path, wanted: set[str]) -> dict[str, list[str]]:
+def tokenize_grdecl(path: Path, wanted: set[str], *, allow_missing: bool = False) -> dict[str, list[str]]:
     values: dict[str, list[str]] = {}
     keyword: str | None = None
     with open(path_for_io(path), "r", encoding="utf-8") as handle:
@@ -88,7 +88,7 @@ def tokenize_grdecl(path: Path, wanted: set[str]) -> dict[str, list[str]]:
                 if "/" in line:
                     keyword = None
     missing = wanted.difference(values)
-    if missing:
+    if missing and not allow_missing:
         raise ValueError(f"{path} is missing required GRDECL keyword(s): {', '.join(sorted(missing))}")
     return values
 

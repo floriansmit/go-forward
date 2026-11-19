@@ -25,6 +25,13 @@ Create a project in the dashboard sidebar, select its rock-workflow profile, and
 
 The project suffix fixes its workflow profile. Do not mix GRDECLs or returned modelling files from different projects in the same output folder.
 
+Siliciclastics projects may instead create their source model in the optional
+**FSM · pyBadlands** tab before the existing FSM → FDM conversion stage. It runs
+an external Badlands environment and exports regular HDF5 stratigraphy to a
+GRDECL with explicit environmental-facies mapping and depth datum. Source grids
+are added only on request, without overwriting existing inputs. See
+[Badlands FSM](docs/workflows/badlands-fsm.md).
+
 ## 2. Install and run the dashboard
 
 Run these commands from the repository root:

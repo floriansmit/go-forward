@@ -15,11 +15,21 @@ GO-Forward is a local Streamlit dashboard and a set of reproducible Python tools
 | Project type | Dashboard path | Current purpose |
 | --- | --- | --- |
 | **MVP** | FSM → FDM → FFM → DFM | Demonstrates the full DionisosFlow, T>Map, geomechanics, and DFM chain. |
-| **Siliciclastics** | GRDECL → 3D points → T>Map → re-appended GRDECL | Production-oriented T>Map handoff with a Fault Seal Analysis placeholder. |
+| **Siliciclastics** | pyBadlands FSM or imported GRDECL → 3D points → T>Map → re-appended GRDECL | Optional Badlands setup/run/GRDECL export, T>Map handoff, and a Fault Seal Analysis placeholder. |
 | **Carbonates** | FSM GRDECL → mesh → GOLEM/PHREEQC → re-appended GRDECL → DFM | Carbonate mesh/diagenesis handoff is scaffolded; direct DionisosFlow properties can already feed geomechanics. |
 | **Crystalline rocks** | GRDECL inspection → geomechanics → DFM | Uses RockType/Lithology definitions rather than sedimentary facies. |
 
 The active profile is fixed when a project is created. Its suffix is part of the project name, for example `_siliciclastics`, `_carbonates`, or `_crystalline`.
+
+### Badlands FSM (development)
+
+On `dev-siliciclastics`, the Siliciclastics profile starts with **FSM · pyBadlands**:
+prepare topography and model parameters, run a separate Badlands Python/WSL
+environment, and convert regular HDF5 stratigraphy to a source GRDECL. Generated
+models can then enter the existing T>Map workflow. Facies are user-mapped
+environmental proxies, not automatic DionisosFlow facies equivalents.
+[Setup, limitations and export conventions](docs/workflows/badlands-fsm.md).
+The published v0.1.0 executable does not yet include this development feature.
 
 ## Repository layout
 

@@ -20,11 +20,17 @@ The left sidebar creates and selects projects. Choose a project type explicitly;
 | Profile | Visible dashboard route |
 | --- | --- |
 | MVP | FSM → FDM (GRDECL → 3D points) · FDM Append & View · FFM Geomech preparation · FFM Run DFM · FFM View results |
-| Siliciclastics | FSM → FDM (GRDECL → 3D points) · FDM Append & View · Fault Seal Analysis placeholder |
+| Siliciclastics | FSM · pyBadlands · FSM → FDM (GRDECL → 3D points) · FDM Append & View · Fault Seal Analysis placeholder |
 | Carbonates | FSM GRDECL → Mesh · FDM Carbonate Diagenesis · FFM Geomech preparation · FFM Run DFM · FFM View results |
 | Crystalline rocks | GRDECL Inspect · FFM Geomech preparation · FFM Run DFM · FFM View results |
 
 Projects are listed from `data/<project>/`. Import one or more source GRDECLs from the first relevant tab; they are copied to `data/<project>/original_grdecl/`. Generated workflow folders are created beside that starting folder and are not versioned.
+
+The optional Badlands FSM tab runs the real solver in a separate Python/WSL
+environment, exports its regular stratigraphy to GRDECL, and explicitly adds
+selected models to the project's source folder. Existing DionisosFlow inputs
+remain usable without running Badlands. See [Badlands FSM](../docs/workflows/badlands-fsm.md)
+for runtime requirements, facies proxies and depth conventions.
 
 ## Viewer behaviour
 

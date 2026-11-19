@@ -3573,7 +3573,7 @@ def geomechanics_facies_editor(rows: list[dict], classification_label: str = "Fa
     )
 
 
-def build_workflow_tabs(profile: str) -> tuple[list[object], object | None, object | None]:
+def build_workflow_tabs(profile: str) -> tuple[list[object], object | None, object | None, object | None]:
     """Return the six existing workflow containers plus profile-only tabs.
 
     The hidden containers retain the mature MVP controls for reuse by the
@@ -3587,12 +3587,12 @@ def build_workflow_tabs(profile: str) -> tuple[list[object], object | None, obje
         "FFM Run DFM",
         "FFM View results",
     ]
-    inspection_tab = placeholder_tab = None
+    inspection_tab = placeholder_tab = fsm_tab = None
     hidden_from: int | None = None
     if profile == "Siliciclastics":
-        labels = [mvp_labels[0], mvp_labels[1], "Fault Seal Analysis", "Internal FFM geomech", "Internal FFM run", "Internal FFM results"]
-        mapping = [0, 1, 1, 3, 4, 5]
-        placeholder_index, hidden_from = 2, 4
+        labels = ["FSM · pyBadlands", mvp_labels[0], mvp_labels[1], "Fault Seal Analysis", "Internal FFM geomech", "Internal FFM run", "Internal FFM results"]
+        mapping = [1, 2, 2, 4, 5, 6]
+        placeholder_index, hidden_from = 3, 5
     elif profile == "Carbonates":
         labels = ["FSM GRDECL → Mesh", "FDM Carbonate Diagenesis", *mvp_labels[2:], "Internal model preparation", "Internal FDM append", "Internal FDM review"]
         mapping = [5, 6, 7, 2, 3, 4]
@@ -3620,7 +3620,9 @@ def build_workflow_tabs(profile: str) -> tuple[list[object], object | None, obje
         inspection_tab = containers[inspection_index]
     if profile in {"Siliciclastics", "Carbonates"}:
         placeholder_tab = containers[placeholder_index]
-    return [containers[index] for index in mapping], inspection_tab, placeholder_tab
+    if profile == "Siliciclastics":
+        fsm_tab = containers[0]
+    return [containers[index] for index in mapping], inspection_tab, placeholder_tab, fsm_tab
 
 
 def classification_property_for_profile(grdecl: Path, profile: str) -> str | None:
@@ -3813,8 +3815,15 @@ ACTIVE_PROJECT_DATA_DIR = DATA_ROOT / ACTIVE_PROJECT_NAME
 ACTIVE_SOURCE_GRDECL_DIR = ACTIVE_PROJECT_DATA_DIR / ORIGINAL_GRDECL_FOLDER
 ACTIVE_APPROACHES = approaches_for_project(ACTIVE_PROJECT_DATA_DIR, active_profile, ACTIVE_SOURCE_GRDECL_DIR)
 
-workflow_tabs, inspection_tab, workflow_placeholder_tab = build_workflow_tabs(active_profile)
+workflow_tabs, inspection_tab, workflow_placeholder_tab, fsm_tab = build_workflow_tabs(active_profile)
 tab1, tab2, tab3, tab4, tab5, tab6 = workflow_tabs
+
+if fsm_tab is not None:
+    from badlands_tab import render_badlands_tab
+
+    with fsm_tab:
+        render_badlands_tab(ACTIVE_PROJECT_DATA_DIR, ACTIVE_SOURCE_GRDECL_DIR, ROOT,
+                            augmented_grdecl_dataframe, visualization_panel, max_rows)
 
 if inspection_tab is not None:
     with inspection_tab:

@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from grdecl_utils import grdecl_cell_centers, path_for_io, tokenize_grdecl
+from grdecl_utils import grdecl_active_mask, grdecl_cell_centers, path_for_io, tokenize_grdecl
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,9 +37,11 @@ def enabled_facies(config_path: Path | None) -> set[int] | None:
     return {int(code) for code, item in metadata.items() if isinstance(item, dict) and item.get("tmap_enabled", True)}
 
 
-def reduced_indices(centers: list[tuple[float, float, float]], properties: list[str], nx: int, ny: int, spacing: float) -> set[int]:
+def reduced_indices(centers: list[tuple[float, float, float]], properties: list[str], nx: int, ny: int, spacing: float, active_mask: list[bool] | None = None) -> set[int]:
     groups: dict[tuple[str, int], list[tuple[int, float]]] = defaultdict(list)
     for index, (_, _, z) in enumerate(centers):
+        if active_mask is not None and not active_mask[index]:
+            continue
         groups[(properties[index], index % (nx * ny))].append((index, z))
     selected: set[int] = set()
     for cells in groups.values():
@@ -69,7 +71,8 @@ def write_pointset(
 
     specgrid = tokenize_grdecl(grdecl_path, {"SPECGRID"})["SPECGRID"]
     nx, ny = int(float(specgrid[0])), int(float(specgrid[1]))
-    selected = reduced_indices(centers, properties, nx, ny, max_vertical_spacing) if max_vertical_spacing else set(range(len(centers)))
+    active_mask = grdecl_active_mask(grdecl_path, len(centers))
+    selected = reduced_indices(centers, properties, nx, ny, max_vertical_spacing, active_mask) if max_vertical_spacing else set(range(len(centers)))
     written = 0
     skipped = 0
     Path(path_for_io(output_path.parent)).mkdir(parents=True, exist_ok=True)
@@ -78,6 +81,7 @@ def write_pointset(
         out.write("# Unit in X and Y direction: m\n")
         out.write("# Unit in depth: m\n")
         out.write("# Generated directly from GRDECL geometry and property arrays\n")
+        out.write("# Inactive ACTNUM cells excluded; CellIndex retains the original full-grid index\n")
         out.write(f"# Source GRDECL: {grdecl_path.name}\n")
         out.write("# Workflow: Best-fit model; direct GRDECL cell-centre point export\n")
         if max_vertical_spacing:
@@ -92,7 +96,7 @@ def write_pointset(
         out.write("END HEADER\n")
         for cell_index, ((x, y, z), property_value) in enumerate(zip(centers, properties)):
             code = int(float(property_value))
-            if cell_index not in selected or (enabled_codes is not None and code not in enabled_codes) or (discrete_novalue is not None and property_value == discrete_novalue):
+            if not active_mask[cell_index] or cell_index not in selected or (enabled_codes is not None and code not in enabled_codes) or (discrete_novalue is not None and property_value == discrete_novalue):
                 skipped += 1
                 continue
             out.write(f"{x:.2f} {y:.2f} {z:.2f} {int(float(property_value))} {cell_index}\n")

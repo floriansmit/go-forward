@@ -3,7 +3,24 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import h5py
+import numpy as np
 import pytest
+
+
+@pytest.fixture
+def stratal_snapshot(tmp_path):
+    """Regular nodal Badlands stratigraphy, oldest-first with an empty last layer."""
+    xx, yy = np.meshgrid(np.arange(3) * 100.0, np.arange(3) * 100.0)
+    path = tmp_path / "sed.time2.hdf5"
+    with h5py.File(path, "w") as h:
+        h["coords"] = np.column_stack((xx.ravel(), yy.ravel()))
+        h["layDepth"] = np.tile([-30.0, -10.0, 0.0], (9, 1))
+        h["layThick"] = np.tile([20.0, 10.0, 0.0], (9, 1))
+        h["layElev"] = np.tile([-100.0, -5.0, 0.0], (9, 1))
+        h["layPoro"] = np.tile([0.2, 0.3, 0.0], (9, 1))
+    return path
 
 
 def generate_mini_grdecl_text(nx: int = 3, ny: int = 3, nz: int = 2, dx: float = 100.0, dy: float = 100.0, dz: float = 50.0) -> str:

@@ -15,6 +15,7 @@ from streamlit.testing.v1 import AppTest
 def dashboard_workspace(tmp_path, mini_grdecl_path, monkeypatch):
     data = tmp_path / "data"
     monkeypatch.setenv("GO_FORWARD_DATA_ROOT", str(data))
+    monkeypatch.setenv("GO_FORWARD_RUNTIME_HOME", str(tmp_path / "runtime"))
 
     def create(profile, suffix):
         project = data / ("Smoke_" + suffix)
@@ -44,6 +45,76 @@ def test_profile_navigation(dashboard_workspace, profile, suffix, first_tab):
     assert app.tabs[0].label == first_tab
     if profile != "Siliciclastics":
         assert "FSM · pyBadlands" not in [t.label for t in app.tabs]
+
+
+def test_first_run_requires_setup_consent(dashboard_workspace):
+    project = dashboard_workspace("Siliciclastics", "siliciclastics")
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "dashboard" / "streamlit_app.py"), default_timeout=60).run()
+    next(b for b in app.button if b.label == "Run simulation").click().run()
+    assert not app.exception
+    assert not (project / "FSM pyBadlands").exists()
+    assert any("Approve" in item.value for item in app.error)
+    assert not any(field.label == "Badlands Python interpreter" for field in app.text_input)
+
+
+def test_one_click_prepares_simulates_and_exports(dashboard_workspace, stratal_snapshot, monkeypatch):
+    import run_badlands_pipeline as pipeline
+
+    project = dashboard_workspace("Siliciclastics", "siliciclastics")
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "dashboard" / "streamlit_app.py"), default_timeout=60).run()
+    monkeypatch.setattr(pipeline, "ensure_managed_runtime", lambda **k: {"backend": "python", "python": "managed"})
+
+    def simulate(run, *args, **kwargs):
+        output = run / "output" / "h5"
+        output.mkdir(parents=True)
+        shutil.copyfile(stratal_snapshot, output / "sed.time2.hdf5")
+        return 0
+
+    monkeypatch.setattr(pipeline, "run_model", simulate)
+
+    def start(command, **kwargs):
+        run = Path(command[command.index("--run-dir") + 1])
+        assert "--allow-setup" in command
+        assert pipeline.run_pipeline(run, allow_setup=True) == 0
+
+    monkeypatch.setattr("badlands_tab.subprocess.Popen", start)
+    app.checkbox(key="badlands::Smoke_siliciclastics::consent").check()
+    app.number_input(key="badlands::Smoke_siliciclastics::datum").set_value(1000.0)
+    next(b for b in app.button if b.label == "Run simulation").click().run()
+    assert not app.exception
+    run = next((project / "FSM pyBadlands" / "runs").iterdir())
+    assert (run / "grdecl" / "badlands_fsm.grdecl").exists()
+    manifest = json.loads((run / "grdecl" / "badlands_fsm.badlands.json").read_text())
+    assert manifest["datum_elevation_m"] == 1000
+
+
+def test_retry_after_windows_setup_preserves_inputs(dashboard_workspace, monkeypatch):
+    from badlands_fsm import prepare_run
+    from run_badlands_fsm import read_status, write_status
+
+    project = dashboard_workspace("Siliciclastics", "siliciclastics")
+    run = project / "FSM pyBadlands" / "runs" / "saved_run"
+    prepare_run(run, {"nx": 7, "ny": 7})
+    saved = (run / "settings.json").read_bytes()
+    (run / "export_settings.json").write_text('{"filename":"saved.grdecl"}')
+    (run / "execution_settings.json").write_text('{"allow_setup":true,"external":null}')
+    write_status(run, status="failed", needs_windows_support=True)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "dashboard" / "streamlit_app.py"), default_timeout=60).run()
+    requests = []
+    monkeypatch.setattr("badlands_tab.request_windows_support", lambda: requests.append("UAC"))
+    next(b for b in app.button if b.label == "Enable Windows simulation support").click().run()
+    assert requests == ["UAC"]
+
+    def start(command, **kwargs):
+        assert Path(command[command.index("--run-dir") + 1]) == run
+        assert "--allow-setup" in command
+        write_status(run, status="completed", stage="GRDECL ready")
+
+    monkeypatch.setattr("badlands_tab.subprocess.Popen", start)
+    next(b for b in app.button if b.label == "Retry simulation").click().run()
+    assert not app.exception
+    assert read_status(run)["status"] == "completed"
+    assert (run / "settings.json").read_bytes() == saved
 
 
 def test_prepare_export_and_handoff(dashboard_workspace, tmp_path):

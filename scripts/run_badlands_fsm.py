@@ -17,7 +17,7 @@ def runtime_command(run_dir: Path, backend: str, python: str, distribution: str,
         arguments = ["-c", "from badlands.model import Model; import importlib.metadata; print('Badlands ' + importlib.metadata.version('badlands'))"]
     if backend == "wsl":
         linux_path = subprocess.check_output(
-            ["wsl.exe", "-d", distribution, "--exec", "wslpath", "-a", str(run_dir.resolve())], text=True,
+            ["wsl.exe", "-d", distribution, "--exec", "wslpath", "-a", str(run_dir.resolve())], text=True, encoding="utf-8",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=30,
         ).strip()
         return ["wsl.exe", "-d", distribution, "--cd", linux_path, "--exec", python, *arguments]
@@ -67,7 +67,7 @@ def stop_child(process: subprocess.Popen, run_dir: Path, backend: str, distribut
         process.wait()
 
 
-def run_model(run_dir: Path, backend: str, python: str, distribution: str) -> int:
+def run_model(run_dir: Path, backend: str, python: str, distribution: str, *, success_status: str = "completed") -> int:
     run_dir = run_dir.resolve()
     lock = run_dir / "runner.lock"
     # Each prepared run is single-use; duplicate dashboard clicks cannot start two models.
@@ -93,7 +93,7 @@ def run_model(run_dir: Path, backend: str, python: str, distribution: str) -> in
         if (run_dir / "cancel.request").exists():
             write_status(run_dir, status="cancelled", returncode=code)
             return 1
-        write_status(run_dir, status="completed" if code == 0 else "failed", returncode=code,
+        write_status(run_dir, status=success_status if code == 0 else "failed", returncode=code,
                      completed_utc=datetime.now(UTC).isoformat())
         return code
     except (OSError, ValueError, subprocess.SubprocessError) as exc:

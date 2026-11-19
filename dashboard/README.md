@@ -26,8 +26,10 @@ The left sidebar creates and selects projects. Choose a project type explicitly;
 
 Projects are listed from `data/<project>/`. Import one or more source GRDECLs from the first relevant tab; they are copied to `data/<project>/original_grdecl/`. Generated workflow folders are created beside that starting folder and are not versioned.
 
-The optional Badlands FSM tab runs the real solver in a separate Python/WSL
-environment, exports its regular stratigraphy to GRDECL, and explicitly adds
+The optional Badlands FSM tab automatically prepares its managed solver on
+first use, runs the real simulation, and exports regular stratigraphy to GRDECL
+from one **Run simulation** action. First-use downloads require consent, and
+Windows may require one-time WSL administrator approval/restart. It explicitly adds
 selected models to the project's source folder. Existing DionisosFlow inputs
 remain usable without running Badlands. See [Badlands FSM](../docs/workflows/badlands-fsm.md)
 for runtime requirements, facies proxies and depth conventions.

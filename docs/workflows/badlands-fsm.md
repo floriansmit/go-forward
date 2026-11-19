@@ -8,35 +8,56 @@ source dashboard until a new executable release is built.
 
 ## Runtime
 
-The dashboard and converter use the normal GO-Forward environment, including
-`h5py`. The numerical solver runs in a **separate Badlands Python environment**,
-either directly or through WSL. Badlands is not bundled into the Windows EXE.
-This separation is intentional: the current Badlands package requires NumPy <2,
-whereas this dashboard uses NumPy 2. Install the solver following the
+The default is **Managed (automatic)**. End users do not enter interpreter
+paths, install Python/uv manually, or open terminals. First use requires consent
+to download the solver and create a local managed environment. Internet access
+and several GB of disk space are needed during setup. Subsequent runs reuse the
+verified environment without downloading it again.
+
+On Windows x64, the app imports its own Ubuntu Base environment as
+`GO-Forward-Badlands` under `%LOCALAPPDATA%\GO-Forward\badlands-runtime`.
+Existing WSL distributions and dashboard Python packages are not modified.
+If WSL 2 is disabled, the dashboard offers **Enable Windows simulation support**,
+which requests Windows administrator approval. A restart or enabling hardware
+virtualization may be necessary. The app never restarts Windows automatically.
+After restarting, use **Retry simulation** to reuse the saved input parameters.
+The WSL feature/UAC/restart path depends on Windows policy and cannot bypass
+institutional administrator restrictions.
+This uses Microsoft's [WSL import mechanism](https://learn.microsoft.com/en-us/windows/wsl/use-custom-distro)
+and a verified [Ubuntu Base image](https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/).
+
+The Ubuntu image and uv bootstrap archive are version-pinned and SHA256-checked
+before use. Setup installs build tools only inside the dedicated Linux
+environment, downloads managed Python 3.11.18, and installs Badlands 2.3.1,
+NumPy 1.26.4 and the tested open-source meshplex fork. Other scientific packages
+are also pinned; exact resolved packages are recorded inside the runtime.
+Shared OS-backed locking prevents concurrent projects from installing the same
+runtime twice. Setup can be retried safely, and failed setup never marks the
+solver as ready. A pre-existing WSL distribution with the reserved name but no
+GO-Forward ownership record is not changed.
+
+The solver remains separate because Badlands requires NumPy <2 while the
+dashboard uses NumPy 2. It is downloaded on first use, not embedded in the
+application EXE. The same button-driven flow works from the portable application
+when built from this branch. The old v0.1.0 download is unchanged.
+
+Native Linux x64 can also prepare a managed runtime when GCC, GFortran and Git
+are already available. Other architectures/platforms can use a separately
+installed solver through **Advanced solver settings**. That panel retains
+External Python and External WSL options for expert-managed installations.
+
+For expert installation only, follow the
 [upstream installation guide](https://badlands.readthedocs.io/en/latest/install.html).
-Do not install it into GO-Forward's `.venv`.
-
-Select WSL and enter its distribution and Linux interpreter path (for example
-`/home/yourname/badlands-env/bin/python`), or select External Python and enter
-the full interpreter path for a native Badlands installation. **Test runtime**
-checks the actual `badlands.model.Model` import before running a simulation.
-The software is also known historically as pyBadlands; the current import is
-`badlands`, not `pyBadlands`.
-
-The integration was validated with Badlands 2.3.1, Python 3.11, NumPy 1.26.4
-and the upstream-recommended open-source meshplex 0.13.3 fork. For an existing
-Linux/WSL installation of uv with GCC/GFortran available, an isolated setup is:
+An example Linux/WSL environment using uv is:
 
 ```bash
 uv venv --python 3.11 ~/.venvs/go-forward-badlands
 uv pip install --python ~/.venvs/go-forward-badlands/bin/python badlands==2.3.1 'git+https://github.com/kinnala/meshplex@09f25dc16501803685eea8b9a50d963a5e0169ee'
 ```
 
-Use that Linux interpreter path in the dashboard. The current PyPI meshplex
-package is not a substitute for this historical open-source fork. Managed
-Python must include development headers for compiling Badlands; Ubuntu's base
-interpreter alone may lack them. No solver installation is performed by a
-dashboard button or silently added to GO-Forward's environment.
+Use that interpreter path only under advanced external runtime settings. The
+current PyPI meshplex package is not a substitute for the tested historical
+open-source fork. Do not install the Badlands solver into GO-Forward's `.venv`.
 
 ## Prepare And Run
 
@@ -44,14 +65,18 @@ dashboard button or silently added to GO-Forward's environment.
 2. Set initial topography, time intervals, rainfall, constant sea level,
    uniform subsidence and surface-process parameters. Initial topography may
    instead be a headerless whitespace-separated `X Y elevation` DEM.
-3. Prepare a run. Each run gets a unique folder; previous runs are never reused.
-4. Test the external runtime and run Badlands. Refresh shows job status and
-   recent logs; Stop run requests termination of the solver.
-5. Select a regular `sed.timeN.hdf5` snapshot, or enter a path to one produced
-   by an external Badlands run.
-6. Set the depth datum, environmental facies mapping and thickness threshold,
-   export a GRDECL, inspect it, and choose **Add to source GRDECLs**.
-7. Continue in **FSM → FDM** using Best-fit, Union, Control or Uber as before.
+3. Set the depth datum, environmental facies mapping and thickness threshold
+   under GRDECL output, and approve first-use setup if needed.
+4. Click **Run simulation**. The app saves inputs, prepares the managed runtime
+   if necessary, simulates stratigraphy and automatically exports the latest
+   regular HDF5 snapshot to GRDECL. Status/logs update automatically.
+5. Inspect the result and choose **Add to source GRDECLs**.
+6. Continue in **FSM → FDM** using Best-fit, Union, Control or Uber as before.
+
+**Prepare run** saves inputs without executing the solver. The manual import/
+export panel remains available for external `sed.timeN.hdf5` snapshots. It is
+not required for a normal simulation. **Stop simulation** also cancels setup,
+but an in-progress package transaction is allowed to finish safely first.
 
 Stop an active WSL model before closing the Windows launcher: Linux processes
 may outlive the Windows client. Each prepared run is single-use once the solver
@@ -69,6 +94,12 @@ not yet expose all Badlands forcing histories or sediment/lithology options.
 XML and model inputs are retained for reproducibility and external inspection.
 No model run or large output is committed to Git.
 
+The managed runtime is shared across projects and remains outside the source
+repository and model folders. `GO_FORWARD_RUNTIME_HOME` can override its host
+location for development/testing. Windows normally uses the LocalAppData path
+above; Linux uses `~/.local/share/go-forward/badlands-runtime`. No application
+updates or project deletion automatically unregister a Linux distribution.
+
 ## Output Layout
 
 ```text
@@ -80,7 +111,10 @@ data/<project>_siliciclastics/
     tectonics.csv         # Optional cumulative vertical displacement
     run_model.py          # Versioned runner copied into the run
     run_status.json       # Supervisor status
+    export_settings.json  # Immutable automatic-export parameters
+    execution_settings.json # Runtime choice and first-use download permission
     launcher.log
+    setup.log
     badlands.log
     runtime.json          # Actual solver/Python versions after success
     output/h5/...         # Real Badlands outputs
@@ -160,3 +194,12 @@ pinchouts, missing/invalid data, non-overwrite handoff, process supervision,
 cancellation, all four profile tab layouts and the dashboard's setup/export/
 adoption/preview sequence. This verifies integration and geometry handling,
 not geological calibration or equivalence to DionisosFlow sedimentology.
+
+Managed first-use setup was also exercised from a clean app-owned Ubuntu Base
+image on a Windows host with WSL 2 already enabled. It installed the compiler
+prerequisites and solver, simulated the same test model, and automatically
+exported its GRDECL. A browser-only Run simulation test and a compiled Windows
+worker test (without Python/uv on PATH) also completed using the managed solver.
+The Windows feature-enablement/UAC path is covered by mocked tests rather than
+disabling/re-enabling WSL on the development computer. Institutional deployment
+should still test that prerequisite path on a representative clean machine.

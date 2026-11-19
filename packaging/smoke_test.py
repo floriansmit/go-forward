@@ -68,11 +68,11 @@ def main():
         assert results and "PORO50" in results[0].read_text()
 
         port = available_port()
-        project = workspace / "data" / "Smoke_mvp"
+        project = workspace / "data" / "Smoke_siliciclastics"
         original = project / "original_grdecl"
         original.mkdir(parents=True)
         shutil.copyfile(source / "mini.grdecl", original / "mini.grdecl")
-        example = resources / "data" / "MVP_Gassum_mvp"
+        example = resources / "data" / "Siliciclastics_Gassum_siliciclastics"
         shutil.copyfile(example / "project_config.json", project / "project_config.json")
         shutil.copyfile(example / "original_grdecl" / "facies_config.json", original / "facies_config.json")
         env = dict(runtime_env, GO_FORWARD_DATA_ROOT=str(workspace / "data"))

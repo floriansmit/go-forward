@@ -19,21 +19,6 @@ from grdecl_utils import grdecl_cell_centers, tokenize_grdecl
 from run_badlands_fsm import read_status, run_model, runtime_command
 
 
-@pytest.fixture
-def stratal_snapshot(tmp_path):
-    xx, yy = np.meshgrid(np.arange(3) * 100.0, np.arange(3) * 100.0)
-    coords = np.column_stack((xx.ravel(), yy.ravel()))
-    # Nodal basal elevation + thickness = basal elevation of the next layer.
-    path = tmp_path / "sed.time2.hdf5"
-    with h5py.File(path, "w") as h:
-        h["coords"] = coords
-        h["layDepth"] = np.tile([-30.0, -10.0, 0.0], (9, 1))
-        h["layThick"] = np.tile([20.0, 10.0, 0.0], (9, 1))
-        h["layElev"] = np.tile([-100.0, -5.0, 0.0], (9, 1))
-        h["layPoro"] = np.tile([0.2, 0.3, 0.0], (9, 1))
-    return path
-
-
 def test_prepare_dem_and_xml(tmp_path):
     run = tmp_path / "run with spaces"
     xml = prepare_run(run, {"nx": 4, "ny": 3, "origin_x": 500000.0})

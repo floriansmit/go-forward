@@ -24,8 +24,11 @@ The active profile is fixed when a project is created. Its suffix is part of the
 ### Badlands FSM (development)
 
 On `dev-siliciclastics`, the Siliciclastics profile starts with **FSM · pyBadlands**:
-prepare topography and model parameters, run a separate Badlands Python/WSL
-environment, and convert regular HDF5 stratigraphy to a source GRDECL. Generated
+prepare topography and model parameters, then click **Run simulation**. The app
+automatically prepares a managed solver, runs Badlands and exports a GRDECL;
+no terminal commands or interpreter paths are needed in the normal workflow.
+First use needs download consent and may require WSL administrator approval or
+a Windows restart. Generated
 models can then enter the existing T>Map workflow. Facies are user-mapped
 environmental proxies, not automatic DionisosFlow facies equivalents.
 [Setup, limitations and export conventions](docs/workflows/badlands-fsm.md).

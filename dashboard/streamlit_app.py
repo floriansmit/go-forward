@@ -30,7 +30,8 @@ except ModuleNotFoundError:  # pragma: no cover - handled inside UI
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 EXTERNAL_TOOLS = ROOT / "external-tools"
-DATA_ROOT = ROOT / "data"
+DATA_ROOT = Path(os.environ.get("GO_FORWARD_DATA_ROOT", ROOT / "data"))
+WORKER_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if getattr(sys, "frozen", False) else 0
 ORIGINAL_GRDECL_FOLDER = "original_grdecl"
 DEFAULT_PROJECT_NAME = "MVP_Gassum_mvp"
 WORKFLOW_PROFILES = {
@@ -2844,6 +2845,7 @@ def run_commands(commands: list[list[str]], show_live_progress: bool = False) ->
             process = subprocess.Popen(
                 full_command,
                 cwd=ROOT,
+                creationflags=WORKER_CREATION_FLAGS,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -2866,7 +2868,7 @@ def run_commands(commands: list[list[str]], show_live_progress: bool = False) ->
             if command_output:
                 output.append("\n".join(command_output))
         else:
-            result = subprocess.run(full_command, cwd=ROOT, capture_output=True, text=True)
+            result = subprocess.run(full_command, cwd=ROOT, capture_output=True, text=True, creationflags=WORKER_CREATION_FLAGS)
             returncode = result.returncode
             if result.stdout:
                 output.append(result.stdout.strip())
@@ -4756,7 +4758,7 @@ with tab5:
                     # depths are already positive down, so neither J nor Z is
                     # re-indexed/inverted during the DFN hand-off.
                     crop_command = [sys.executable, str(SCRIPTS / "crop_grdecl.py"), str(input_grdecl), str(grid_path), "--i", str(crop_i[0]), str(crop_i[1]), "--j", str(crop_j[0]), str(crop_j[1]), "--k", str(crop_k[0]), str(crop_k[1]), "--dfn-minimal", "--dfn-petrel-style", "--dipazimuth-degrees-to-radians"]
-                    crop_result = subprocess.run(crop_command, cwd=ROOT, capture_output=True, text=True)
+                    crop_result = subprocess.run(crop_command, cwd=ROOT, capture_output=True, text=True, creationflags=WORKER_CREATION_FLAGS)
                     if crop_result.returncode != 0:
                         message = crop_result.stderr or crop_result.stdout or "Unknown hand-off preparation error"
                         (run_dir / "run_status.json").write_text(json.dumps({"status": "failed", "run_id": run_id, "stage": "prepare_dfn_input", "error": message}, indent=2) + "\n", encoding="utf-8")

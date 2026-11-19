@@ -55,6 +55,28 @@ Only `data/<project>/original_grdecl/` is versioned. Generated project workflow 
 
 ## Install and run
 
+### Windows portable download (no Python required)
+
+The Windows build bundles Python, Streamlit and the workflow tools. Download
+`GO-Forward-Windows-x64.zip` from [GitHub Releases](https://github.com/floriansmit/go-forward/releases),
+extract the **whole folder**, and double-click **GO-Forward.exe**. A small launcher
+opens the dashboard in your default browser. Close the launcher to stop the server.
+Do not run `GO-Forward-worker.exe` directly or move the launcher out of its folder.
+
+Projects and results are saved in `%USERPROFILE%\GO-Forward\data`, not inside the
+application bundle. Updating the extracted application therefore leaves your data
+intact. Logs are in `%USERPROFILE%\GO-Forward\dashboard.log`. The server listens
+only on your own computer; Python, a terminal and `uv` are not needed by users.
+External modelling services such as T>Map still need their own installation.
+
+Release downloads become available after a maintainer publishes a `v*` tag.
+Before the first release, maintainers can download a build from the manually
+triggered **Windows portable dashboard** GitHub Actions workflow.
+Unsigned builds may prompt Windows SmartScreen; institutional policies may require
+administrator approval. See [Windows packaging](docs/developer/windows-portable.md).
+
+### Python installation
+
 [uv](https://docs.astral.sh/uv/getting-started/installation/) is the recommended dependency manager. It creates a project-local environment using the versions recorded in `uv.lock`.
 
 ```powershell
